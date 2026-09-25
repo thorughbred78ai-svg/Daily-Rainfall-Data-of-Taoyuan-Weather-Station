@@ -1,14 +1,12 @@
 name: 桃園地面測站每日雨量
 
 on:
-  # 每 8 小時執行一次
-  #
-  # GitHub Actions 可以直接指定 timezone。
+  # 台灣時間每 8 小時執行一次
   schedule:
     - cron: "0 0,8,16 * * *"
       timezone: "Asia/Taipei"
 
-  # 可以從 GitHub Actions 手動執行
+  # GitHub Actions 手動執行
   workflow_dispatch:
     inputs:
       stations:
@@ -23,7 +21,6 @@ permissions:
 
 
 jobs:
-
   weather:
 
     runs-on: ubuntu-latest
@@ -31,69 +28,23 @@ jobs:
     timeout-minutes: 10
 
     env:
-
-      # ------------------------------------------------------
-      # CWA API
-      # GitHub:
-      # Settings
-      # → Secrets and variables
-      # → Actions
-      # → New repository secret
-      #
-      # Name:
-      # CWA_API_KEY
-      # ------------------------------------------------------
-
       CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
-
-      # ------------------------------------------------------
-      # Telegram Bot Token
-      #
-      # Name:
-      # TELEGRAM_BOT_TOKEN
-      # ------------------------------------------------------
-
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-
-      # ------------------------------------------------------
-      # Telegram Chat ID
-      #
-      # Name:
-      # TELEGRAM_CHAT_ID
-      # ------------------------------------------------------
-
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-
-      # ------------------------------------------------------
-      # 手動執行時的測站
-      # ------------------------------------------------------
 
       REQUESTED_STATIONS: ${{ inputs.stations }}
 
-
     steps:
-
-      # ------------------------------------------------------
-      # 取得 Repository
-      # ------------------------------------------------------
 
       - name: Checkout
         uses: actions/checkout@v4
 
-
-      # ------------------------------------------------------
-      # Python
-      # ------------------------------------------------------
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-
-      # ------------------------------------------------------
-      # 檢查 Secret
-      # ------------------------------------------------------
 
       - name: Check configuration
         shell: bash
@@ -119,11 +70,6 @@ jobs:
           echo "TELEGRAM_CHAT_ID: OK"
 
 
-      # ------------------------------------------------------
-      # 執行
-      # ------------------------------------------------------
-
       - name: Run weather bot
         run: |
-
           python scripts/weather.py
