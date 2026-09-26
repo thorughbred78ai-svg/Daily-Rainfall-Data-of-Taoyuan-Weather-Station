@@ -358,13 +358,6 @@ def build_weather_message(
             f"📍 {data['StationName']}"
         )
 
-        if data.get("StationNameEN"):
-
-            lines.append(
-                f"英文名稱："
-                f"{data['StationNameEN']}"
-            )
-
         if data.get("StationID"):
 
             lines.append(
@@ -372,12 +365,6 @@ def build_weather_message(
                 f"{data['StationID']}"
             )
 
-        if data.get("StationAttribute"):
-
-            lines.append(
-                f"測站類型："
-                f"{data['StationAttribute']}"
-            )
 
         lines.append(
             f"🌧 降雨量："
