@@ -66,7 +66,10 @@ TARGET_STATIONS = [
 # ============================================================
 
 def telegram_send(chat_id: str, message: str):
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    token = os.environ.get(
+        "TELEGRAM_BOT_TOKEN",
+        ""
+    ).strip()
 
     if not token:
         raise RuntimeError(
@@ -113,6 +116,7 @@ def telegram_send(chat_id: str, message: str):
 # ============================================================
 
 def fetch_cwa_data(target_date: str):
+
     api_key = os.environ.get(
         "CWA_API_KEY",
         ""
@@ -169,6 +173,7 @@ def fetch_cwa_data(target_date: str):
 # ============================================================
 
 def parse_stations(data, target_date):
+
     locations = (
         data
         .get("records", {})
@@ -257,6 +262,7 @@ def parse_precipitation(value):
 
     try:
         return float(value)
+
     except (TypeError, ValueError):
         return 0.0
 
@@ -280,6 +286,13 @@ def format_mm(value):
 
 # ============================================================
 # 產生一般雨量訊息
+#
+# 沒有對應氣象資料的測站：
+#   - 不輸出
+#
+# 所有測站都沒有資料：
+#   - 回傳 None
+#   - main() 將不發送 Telegram
 # ============================================================
 
 def build_weather_message(
@@ -288,65 +301,79 @@ def build_weather_message(
     target_date,
 ):
 
-    lines = []
-
-    lines.append("🌧 降雨量資訊")
-    lines.append(
-        f"📅 日期：{target_date}"
-    )
-    lines.append("")
-
-    if requested_stations:
-        lines.append(
-            "查詢測站："
-            + "、".join(requested_stations)
-        )
-        lines.append("")
-
+    # 建立測站名稱 → 資料的對照表
     result_map = {
         item["StationName"]: item
         for item in results
     }
 
-    found_count = 0
+    # --------------------------------------------------------
+    # 只保留有資料的測站
+    # --------------------------------------------------------
 
-    for station_name in requested_stations:
+    available_results = [
+        result_map[station_name]
+        for station_name in requested_stations
+        if station_name in result_map
+    ]
 
-        data = result_map.get(
-            station_name
+    # --------------------------------------------------------
+    # 如果全部測站都沒有資料
+    # --------------------------------------------------------
+
+    if not available_results:
+        return None
+
+    # --------------------------------------------------------
+    # 開始建立訊息
+    # --------------------------------------------------------
+
+    lines = []
+
+    lines.append("🌧 降雨量資訊")
+
+    lines.append(
+        f"📅 日期：{target_date}"
+    )
+
+    lines.append("")
+
+    lines.append(
+        "查詢測站："
+        + "、".join(
+            item["StationName"]
+            for item in available_results
         )
+    )
 
-        if not data:
-            lines.append(
-                f"📍 {station_name}"
-            )
-            lines.append(
-                "⚠️ 尚無對應氣象資料"
-            )
-            lines.append(
-                "────────────────"
-            )
-            continue
+    lines.append("")
 
-        found_count += 1
+    # --------------------------------------------------------
+    # 輸出有資料的測站
+    # --------------------------------------------------------
+
+    for data in available_results:
 
         lines.append(
             f"📍 {data['StationName']}"
         )
 
         if data.get("StationNameEN"):
+
             lines.append(
                 f"英文名稱："
                 f"{data['StationNameEN']}"
             )
 
         if data.get("StationID"):
+
             lines.append(
                 f"測站編號："
                 f"{data['StationID']}"
             )
 
         if data.get("StationAttribute"):
+
             lines.append(
                 f"測站類型："
                 f"{data['StationAttribute']}"
@@ -361,11 +388,15 @@ def build_weather_message(
             "────────────────"
         )
 
+    # --------------------------------------------------------
+    # 統計
+    # --------------------------------------------------------
+
     lines.append("")
 
     lines.append(
         f"📊 已取得 "
-        f"{found_count} / "
+        f"{len(available_results)} / "
         f"{len(requested_stations)} "
         f"個測站資料"
     )
@@ -433,14 +464,17 @@ def parse_requested_stations():
 
     # GitHub Actions workflow_dispatch
     # 會將輸入放在環境變數 REQUESTED_STATIONS
+
     value = os.environ.get(
         "REQUESTED_STATIONS",
         ""
     ).strip()
 
+    # 沒有輸入 → 使用預設測站
     if not value:
         return DEFAULT_STATIONS
 
+    # --------------------------------------------------------
     # 支援：
     #
     # 新屋,八德,蘆竹
@@ -448,6 +482,7 @@ def parse_requested_stations():
     # 新屋、八德、蘆竹
     #
     # 新屋 八德 蘆竹
+    # --------------------------------------------------------
 
     value = value.replace(
         "、",
@@ -470,7 +505,10 @@ def parse_requested_stations():
         if item.strip()
     ]
 
+    # --------------------------------------------------------
     # 只接受 TARGET_STATIONS
+    # --------------------------------------------------------
+
     valid = [
         station
         for station in stations
@@ -486,24 +524,44 @@ def parse_requested_stations():
 
 def main():
 
+    # --------------------------------------------------------
+    # 台灣時間
+    # --------------------------------------------------------
+
     now = datetime.now(
         TAIPEI_TZ
     )
 
+    # --------------------------------------------------------
+    # 查詢昨天
+    # --------------------------------------------------------
+
     yesterday = (
         now - timedelta(days=1)
     ).strftime("%Y-%m-%d")
+
+    # --------------------------------------------------------
+    # Telegram Chat ID
+    # --------------------------------------------------------
 
     chat_id = os.environ.get(
         "TELEGRAM_CHAT_ID",
         ""
     ).strip()
 
+    # --------------------------------------------------------
+    # 解析指定測站
+    # --------------------------------------------------------
+
     requested_stations = (
         parse_requested_stations()
     )
 
+    # 如果使用者輸入了無效測站
+    # 改回預設測站
+
     if not requested_stations:
+
         print(
             "⚠️ 沒有指定有效測站，"
             "改用預設測站。"
@@ -512,6 +570,10 @@ def main():
         requested_stations = (
             DEFAULT_STATIONS
         )
+
+    # --------------------------------------------------------
+    # Console 標題
+    # --------------------------------------------------------
 
     print(
         "========================================"
@@ -542,9 +604,9 @@ def main():
         "========================================"
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # CWA
-    # --------------------------------------------------------
+    # ========================================================
 
     data = fetch_cwa_data(
         yesterday
@@ -560,9 +622,9 @@ def main():
         f"{len(results)} 筆"
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # 一般雨量訊息
-    # --------------------------------------------------------
+    # ========================================================
 
     weather_message = (
         build_weather_message(
@@ -573,60 +635,100 @@ def main():
     )
 
     print("")
-    print(weather_message)
 
-    # --------------------------------------------------------
-    # Telegram
-    # --------------------------------------------------------
+    if weather_message:
 
-    telegram_send(
-        chat_id,
-        weather_message
-    )
+        print(weather_message)
 
-    print(
-        "✅ 一般雨量訊息已發送"
-    )
+    else:
 
-    # --------------------------------------------------------
-    # 350 mm 警報
-    # --------------------------------------------------------
-
-    alert_message = (
-        build_alert_message(
-            results,
-            yesterday,
+        print(
+            "⚠️ 所有指定測站皆「尚無對應氣象資料」。"
         )
-    )
 
-    if alert_message:
+    # ========================================================
+    # Telegram 一般雨量訊息
+    #
+    # 只有至少一個測站有資料才發送
+    # ========================================================
 
-        print("")
-        print(alert_message)
+    if weather_message:
 
         telegram_send(
             chat_id,
-            alert_message
+            weather_message
         )
 
         print(
-            "🚨 350 mm 警報已發送"
+            "✅ 一般雨量訊息已發送"
         )
 
     else:
 
         print(
-            "ℹ️ 沒有測站達到 "
-            f"{format_mm(RAIN_THRESHOLD)} mm"
+            "⚠️ 所有指定測站皆無氣象資料，"
+            "略過 Telegram 一般雨量訊息。"
         )
+
+    # ========================================================
+    # 350 mm 警報
+    #
+    # 只有至少一個測站有資料才檢查
+    # ========================================================
+
+    if results:
+
+        alert_message = (
+            build_alert_message(
+                results,
+                yesterday,
+            )
+        )
+
+        if alert_message:
+
+            print("")
+            print(alert_message)
+
+            telegram_send(
+                chat_id,
+                alert_message
+            )
+
+            print(
+                "🚨 350 mm 警報已發送"
+            )
+
+        else:
+
+            print(
+                "ℹ️ 沒有測站達到 "
+                f"{format_mm(RAIN_THRESHOLD)} mm"
+            )
+
+    else:
+
+        print(
+            "⚠️ 所有指定測站皆無氣象資料，"
+            "略過 350 mm 警報。"
+        )
+
+    # ========================================================
+    # 完成
+    # ========================================================
 
     print("")
     print("完成。")
 
 
+# ============================================================
+# Entry Point
+# ============================================================
+
 if __name__ == "__main__":
 
     try:
+
         main()
 
     except Exception as exc:
@@ -637,3 +739,4 @@ if __name__ == "__main__":
         )
 
         raise
+
