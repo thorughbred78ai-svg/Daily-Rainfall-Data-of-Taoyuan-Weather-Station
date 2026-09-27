@@ -1,75 +1,86 @@
-name: 桃園地面測站每日雨量
+name: Taoyuan Weather
 
 on:
-  # 台灣時間每 8 小時執行一次
-  schedule:
-    - cron: "0 0,8,16 * * *"
-      timezone: "Asia/Taipei"
-
-  # GitHub Actions 手動執行
   workflow_dispatch:
     inputs:
-      stations:
-        description: "測站名稱，可用逗號或頓號分隔，例如：新屋,八德,蘆竹,龜山,中壢"
+      input_date:
+        description: "指定預報日期，例如 2026-09-25；留空使用台灣當天日期"
         required: false
-        default: "桃園區,中壢區,龜山區,八德區,蘆竹區,大園區,觀音區,新屋區,楊梅區,平鎮區,復興區,龍潭區,大溪區"
+        default: ""
         type: string
 
+      input_locations:
+        description: "指定行政區，例如 桃園區,中壢區,龜山區；留空使用全部 13 區"
+        required: false
+        default: ""
+        type: string
+
+      send_telegram:
+        description: "是否推送 Telegram"
+        required: false
+        default: true
+        type: boolean
+
+  schedule:
+    # GitHub Actions cron 使用 UTC。
+    # 這裡設定每小時執行一次。
+    # 00:00 UTC = 台灣 08:00
+    # 01:00 UTC = 台灣 09:00
+    - cron: "0 * * * *"
 
 permissions:
   contents: read
 
-
 jobs:
   weather:
-
+    name: Taoyuan Weather
     runs-on: ubuntu-latest
 
-    timeout-minutes: 10
-
-    env:
-      CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-
-      REQUESTED_STATIONS: ${{ inputs.stations }}
-
     steps:
+      # ------------------------------------------------------
+      # Checkout
+      # ------------------------------------------------------
 
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ------------------------------------------------------
+      # Python
+      # ------------------------------------------------------
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
 
+      # ------------------------------------------------------
+      # Python dependencies
+      # ------------------------------------------------------
 
-      - name: Check configuration
-        shell: bash
+      - name: Install dependencies
         run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
 
-          if [ -z "$CWA_API_KEY" ]; then
-            echo "::error::缺少 CWA_API_KEY"
-            exit 1
-          fi
+      # ------------------------------------------------------
+      # 執行天氣程式
+      # ------------------------------------------------------
 
-          if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
-            echo "::error::缺少 TELEGRAM_BOT_TOKEN"
-            exit 1
-          fi
+      - name: Run weather
+        env:
+          CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
 
-          if [ -z "$TELEGRAM_CHAT_ID" ]; then
-            echo "::error::缺少 TELEGRAM_CHAT_ID"
-            exit 1
-          fi
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
 
-          echo "CWA_API_KEY: OK"
-          echo "TELEGRAM_BOT_TOKEN: OK"
-          echo "TELEGRAM_CHAT_ID: OK"
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
+          INPUT_DATE: ${{ inputs.input_date }}
 
-      - name: Run weather bot
+          INPUT_LOCATIONS: ${{ inputs.input_locations }}
+
+          SEND_TELEGRAM: ${{ inputs.send_telegram || 'true' }}
+
         run: |
           python scripts/weather.py
