@@ -367,14 +367,14 @@ npm run weather
 
 CWA_API_KEY="你的KEY" \
 SEND_TELEGRAM=false \
-INPUT_LOCATIONS="桃園區,中壢區,龜山區" \
+INPUT_LOCATIONS="桃園區,中壢區,龜山區,八德區,蘆竹區,大園區,觀音區,新屋區,楊梅區,平鎮區,復興區,龍潭區,大溪區" \
 npm run weather
 
 指定日期 + 指定行政區
 CWA_API_KEY="你的KEY" \
 SEND_TELEGRAM=false \
 INPUT_DATE="2026-09-25" \
-INPUT_LOCATIONS="桃園區,中壢區,龜山區" \
+INPUT_LOCATIONS="桃園區,中壢區,龜山區,八德區,蘆竹區,大園區,觀音區,新屋區,楊梅區,平鎮區,復興區,龍潭區,大溪區" \
 npm run weather
 
 專案結構
