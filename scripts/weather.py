@@ -1,729 +1,579 @@
-#!/usr/bin/env python3
-
-import os
-import sys
-import json
-import urllib.parse
-import urllib.request
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-
-
-# ============================================================
-# 設定
-# ============================================================
-
-CWA_API_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/C-B0025-001"
-
-TAIPEI_TZ = ZoneInfo("Asia/Taipei")
-
-RAIN_THRESHOLD = 350.0
-
-DEFAULT_STATIONS = [
-    "新屋",
-    "八德",
-    "蘆竹",
-    "龜山",
-    "中壢",
-]
-
-TARGET_STATIONS = [
-    "大溪永福",
-    "中大臨海站",
-    "觀音工業區",
-    "八德蔬果",
-    "新興坑尾",
-    "國二E009K",
-    "國一高架N063K",
-    "國三N072K",
-    "國三N063K",
-    "國一S072K",
-    "西濱S032K",
-    "中央大學",
-    "茶改場",
-    "東眼山",
-    "蘆竹",
-    "新屋",
-    "復興",
-    "八德",
-    "大溪",
-    "平鎮",
-    "楊梅",
-    "龍潭",
-    "龜山",
-    "竹圍",
-    "中德",
-    "水尾",
-    "四稜",
-    "桃園",
-    "觀音",
-    "中壢",
-]
-
-
-# ============================================================
-# Telegram
-# ============================================================
-
-def telegram_send(chat_id: str, message: str):
-    token = os.environ.get(
-        "TELEGRAM_BOT_TOKEN",
-        ""
-    ).strip()
-
-    if not token:
-        raise RuntimeError(
-            "缺少 TELEGRAM_BOT_TOKEN GitHub Secret"
-        )
-
-    if not chat_id:
-        raise RuntimeError(
-            "缺少 TELEGRAM_CHAT_ID GitHub Secret"
-        )
-
-    url = (
-        f"https://api.telegram.org/bot{token}/sendMessage"
-    )
-
-    payload = urllib.parse.urlencode({
-        "chat_id": chat_id,
-        "text": message,
-    }).encode("utf-8")
-
-    request = urllib.request.Request(
-        url,
-        data=payload,
-        method="POST",
-    )
-
-    with urllib.request.urlopen(
-        request,
-        timeout=30,
-    ) as response:
+🌤 Taoyuan Weather
 
-        result = json.loads(
-            response.read().decode("utf-8")
-        )
+桃園市 13 行政區天氣預報 GitHub Actions 專案。
 
-    if not result.get("ok"):
-        raise RuntimeError(
-            f"Telegram API error: {result}"
-        )
+目前版本：
 
+v2.2.0
 
-# ============================================================
-# CWA API
-# ============================================================
+功能
 
-def fetch_cwa_data(target_date: str):
+桃園市 13 行政區天氣預報
 
-    api_key = os.environ.get(
-        "CWA_API_KEY",
-        ""
-    ).strip()
+未來 3 天逐 3 小時預報
 
-    if not api_key:
-        raise RuntimeError(
-            "缺少 CWA_API_KEY GitHub Secret"
-        )
+未來 7 天逐日預報
 
-    params = {
-        "format": "JSON",
-        "DataType": "stationObsTimes",
-        "timeFrom": target_date,
-        "timeTo": target_date,
-    }
-
-    url = (
-        CWA_API_URL
-        + "?"
-        + urllib.parse.urlencode(params)
-    )
-
-    request = urllib.request.Request(
-        url,
-        headers={
-            "Authorization": api_key,
-            "User-Agent": "GitHubActions-WeatherBot/1.0",
-        },
-    )
-
-    print(f"CWA URL: {CWA_API_URL}")
-    print(f"查詢日期: {target_date}")
+使用中央氣象署 CWA API
 
-    with urllib.request.urlopen(
-        request,
-        timeout=60,
-    ) as response:
-
-        body = response.read().decode("utf-8")
+Telegram Bot 推播
 
-    data = json.loads(body)
-
-    if str(data.get("success")).lower() != "true":
-        raise RuntimeError(
-            f"CWA API 回傳錯誤: {data}"
-        )
+GitHub Actions 自動執行
 
-    return data
+可指定預報日期
 
+可指定行政區
 
-# ============================================================
-# 解析 CWA 資料
-# ============================================================
+可設定是否推送 Telegram
 
-def parse_stations(data, target_date):
+Telegram 自動分割長訊息
 
-    locations = (
-        data
-        .get("records", {})
-        .get("location", [])
-    )
+使用 Node.js 內建 fetch()
 
-    results = []
+降雨機率達門檻才進行 Telegram 推播
 
-    for location in locations:
+降雨推播規則
 
-        station = location.get(
-            "station",
-            {}
-        )
+本專案目前的降雨推播門檻為：
 
-        station_name = station.get(
-            "StationName"
-        )
+降雨機率 >= 70%
 
-        if station_name not in TARGET_STATIONS:
-            continue
 
-        obs_times = (
-            location
-            .get("stationObsTimes", {})
-            .get("stationObsTime", [])
-        )
+規則如下：
 
-        for obs in obs_times:
+降雨機率	Telegram 推播	Telegram 顯示
+0% ～ 69%	❌	❌
+70%	✅	✅
+71% ～ 100%	✅	✅
+推播條件
 
-            date = obs.get("Date")
+只要：
 
-            if date != target_date:
-                continue
+任一行政區、任一時段的降雨機率 >= 70%
 
-            weather_elements = obs.get(
-                "weatherElements",
-                {}
-            )
+就會觸發整次 Telegram 推播。
 
-            raw = weather_elements.get(
-                "Precipitation"
-            )
+訊息內容
 
-            precipitation = parse_precipitation(
-                raw
-            )
+Telegram 訊息只會列出：
 
-            results.append({
-                "StationID": station.get(
-                    "StationID",
-                    ""
-                ),
-                "StationName": station_name,
-                "StationNameEN": station.get(
-                    "StationNameEN",
-                    ""
-                ),
-                "StationAttribute": station.get(
-                    "StationAttribute",
-                    ""
-                ),
-                "Date": date,
-                "Precipitation": precipitation,
-                "PrecipitationRaw": raw,
-            })
+降雨機率 >= 70%
 
-    return results
 
+的資料。
 
-# ============================================================
-# 雨量轉數字
-# ============================================================
+因此：
 
-def parse_precipitation(value):
+60% → 不推播、不顯示
+69% → 不推播、不顯示
+70% → 推播、顯示
+80% → 推播、顯示
+100% → 推播、顯示
 
-    if value is None:
-        return 0.0
 
-    if value == "":
-        return 0.0
+例如：
 
-    if str(value).upper() == "T":
-        # Trace
-        return 0.0
+📍 桃園區
 
-    try:
-        return float(value)
+【未來3天・逐3小時】
+12:00～15:00｜短暫雨｜降雨70%
+15:00～18:00｜雨｜降雨80%
 
-    except (TypeError, ValueError):
-        return 0.0
 
+70% 本身會保留在 Telegram 訊息中。
 
-# ============================================================
-# 格式化數字
-# ============================================================
+如果所有行政區、所有預報時段的降雨機率都低於 70%，則：
 
-def format_mm(value):
+不會發送 Telegram
 
-    if value is None:
-        return "0"
 
-    value = float(value)
+也不會產生只有標題的空訊息。
 
-    if value.is_integer():
-        return str(int(value))
+CWA 資料集
 
-    return f"{value:.1f}"
+本專案使用中央氣象署桃園市專屬資料集。
 
+未來 3 天
+F-D0047-005
 
-# ============================================================
-# 產生一般雨量訊息
-#
-# 沒有對應氣象資料的測站：
-#   - 不輸出
-#
-# 所有測站都沒有資料：
-#   - 回傳 None
-#   - main() 將不發送 Telegram
-# ============================================================
 
-def build_weather_message(
-    results,
-    requested_stations,
-    target_date,
-):
+用途：
 
-    # 建立測站名稱 → 資料的對照表
-    result_map = {
-        item["StationName"]: item
-        for item in results
-    }
+桃園市未來 3 天逐 3 小時天氣預報
 
-    # --------------------------------------------------------
-    # 只保留有資料的測站
-    # --------------------------------------------------------
+未來 1 週
+F-D0047-007
 
-    available_results = [
-        result_map[station_name]
-        for station_name in requested_stations
-        if station_name in result_map
-    ]
 
-    # --------------------------------------------------------
-    # 如果全部測站都沒有資料
-    # --------------------------------------------------------
+用途：
 
-    if not available_results:
-        return None
+桃園市未來 1 週天氣預報
 
-    # --------------------------------------------------------
-    # 開始建立訊息
-    # --------------------------------------------------------
 
-    lines = []
+本專案不再使用：
 
-    lines.append("🌧 降雨量資訊")
+F-D0047-093
 
-    lines.append(
-        f"📅 日期：{target_date}"
-    )
 
-    lines.append("")
+目前由：
 
-    lines.append(
-        "查詢測站："
-        + "、".join(
-            item["StationName"]
-            for item in available_results
-        )
-    )
+F-D0047-005
++
+F-D0047-007
 
-    lines.append("")
 
-    # --------------------------------------------------------
-    # 輸出有資料的測站
-    # --------------------------------------------------------
+兩個資料集分別取得資料後，再於程式中整理成 Telegram 訊息。
 
-    for data in available_results:
+GitHub Secrets
 
-        lines.append(
-            f"📍 {data['StationName']}"
-        )
+進入：
 
-        if data.get("StationID"):
+Repository
+→ Settings
+→ Secrets and variables
+→ Actions
 
-            lines.append(
-                f"測站編號："
-                f"{data['StationID']}"
-            )
 
+建立以下 GitHub Actions Secrets：
 
-        lines.append(
-            f"🌧 降雨量："
-            f"{format_mm(data['Precipitation'])} mm"
-        )
+CWA_API_KEY
+TELEGRAM_BOT_TOKEN
+TELEGRAM_CHAT_ID
 
-        lines.append(
-            "────────────────"
-        )
+CWA_API_KEY
 
-    # --------------------------------------------------------
-    # 統計
-    # --------------------------------------------------------
+中央氣象署 API 金鑰。
 
-    lines.append("")
+TELEGRAM_BOT_TOKEN
 
-    lines.append(
-        f"📊 已取得 "
-        f"{len(available_results)} / "
-        f"{len(requested_stations)} "
-        f"個測站資料"
-    )
+Telegram Bot Token。
 
-    return "\n".join(lines)
+TELEGRAM_CHAT_ID
 
+接收天氣通知的 Telegram Chat ID。
 
-# ============================================================
-# 產生 350 mm 警報
-# ============================================================
+GitHub Actions
 
-def build_alert_message(
-    results,
-    target_date,
-):
+可以從 GitHub Actions 手動執行。
 
-    triggered = [
-        item
-        for item in results
-        if item["Precipitation"]
-        >= RAIN_THRESHOLD
-    ]
+進入：
 
-    if not triggered:
-        return None
+Actions
+→ Taoyuan Weather
+→ Run workflow
 
-    lines = [
-        "🌧️ 桃園雨量警報",
-        "",
-        (
-            f"⚠️ {target_date} "
-            f"累積雨量達 "
-            f"{format_mm(RAIN_THRESHOLD)} mm 以上"
-        ),
-        "",
-    ]
+Workflow 參數
+input_date
 
-    for station in triggered:
+指定預報日期。
 
-        lines.append(
-            f"📍 測站："
-            f"{station['StationName']}"
-        )
+例如：
 
-        lines.append(
-            f"📅 日期："
-            f"{station['Date']}"
-        )
+2026-09-25
 
-        lines.append(
-            f"🌧️ 雨量："
-            f"{format_mm(station['Precipitation'])} mm"
-        )
 
-        lines.append("")
+留空：
 
-    return "\n".join(lines)
+使用台灣當天日期
 
 
-# ============================================================
-# 解析手動輸入測站
-# ============================================================
+程式會使用：
 
-def parse_requested_stations():
+Asia/Taipei
 
-    # GitHub Actions workflow_dispatch
-    # 會將輸入放在環境變數 REQUESTED_STATIONS
 
-    value = os.environ.get(
-        "REQUESTED_STATIONS",
-        ""
-    ).strip()
+時區取得日期。
 
-    # 沒有輸入 → 使用預設測站
-    if not value:
-        return DEFAULT_STATIONS
+input_locations
 
-    # --------------------------------------------------------
-    # 支援：
-    #
-    # 新屋,八德,蘆竹
-    #
-    # 新屋、八德、蘆竹
-    #
-    # 新屋 八德 蘆竹
-    # --------------------------------------------------------
+指定要處理的桃園行政區。
 
-    value = value.replace(
-        "、",
-        ","
-    )
+例如：
 
-    value = value.replace(
-        "，",
-        ","
-    )
+桃園區
 
-    value = value.replace(
-        " ",
-        ","
-    )
 
-    stations = [
-        item.strip()
-        for item in value.split(",")
-        if item.strip()
-    ]
+或：
 
-    # --------------------------------------------------------
-    # 只接受 TARGET_STATIONS
-    # --------------------------------------------------------
+桃園區,中壢區,龜山區
 
-    valid = [
-        station
-        for station in stations
-        if station in TARGET_STATIONS
-    ]
 
-    return valid
+留空：
 
+桃園市 13 行政區全部處理
 
-# ============================================================
-# 主程式
-# ============================================================
 
-def main():
+未知的行政區名稱會被忽略。
 
-    # --------------------------------------------------------
-    # 台灣時間
-    # --------------------------------------------------------
+如果最後沒有任何有效行政區，程式會直接停止並回報錯誤。
 
-    now = datetime.now(
-        TAIPEI_TZ
-    )
+send_telegram
 
-    # --------------------------------------------------------
-    # 查詢昨天
-    # --------------------------------------------------------
+控制是否推送 Telegram。
 
-    yesterday = (
-        now - timedelta(days=1)
-    ).strftime("%Y-%m-%d")
+設定：
 
-    # --------------------------------------------------------
-    # Telegram Chat ID
-    # --------------------------------------------------------
+true
 
-    chat_id = os.environ.get(
-        "TELEGRAM_CHAT_ID",
-        ""
-    ).strip()
 
-    # --------------------------------------------------------
-    # 解析指定測站
-    # --------------------------------------------------------
+代表：
 
-    requested_stations = (
-        parse_requested_stations()
-    )
+取得 CWA 資料
++
+解析資料
++
+符合降雨門檻時推送 Telegram
 
-    # 如果使用者輸入了無效測站
-    # 改回預設測站
 
-    if not requested_stations:
+設定：
 
-        print(
-            "⚠️ 沒有指定有效測站，"
-            "改用預設測站。"
-        )
+false
 
-        requested_stations = (
-            DEFAULT_STATIONS
-        )
 
-    # --------------------------------------------------------
-    # Console 標題
-    # --------------------------------------------------------
+代表：
 
-    print(
-        "========================================"
-    )
+取得 CWA 資料
++
+解析資料
++
+輸出 GitHub Actions Log
 
-    print(
-        "桃園地面測站每日雨量"
-    )
 
-    print(
-        "========================================"
-    )
+但：
 
-    print(
-        f"現在時間：{now.isoformat()}"
-    )
+不推送 Telegram
 
-    print(
-        f"查詢日期：{yesterday}"
-    )
+Telegram 推播流程
 
-    print(
-        "查詢測站："
-        + "、".join(requested_stations)
-    )
+程式執行後會依照以下流程：
 
-    print(
-        "========================================"
-    )
+CWA API
+   ↓
+取得 F-D0047-005
+   ↓
+取得 F-D0047-007
+   ↓
+解析桃園各行政區
+   ↓
+檢查降雨機率
+   ↓
+是否有任一筆 >= 70%？
+   ↓
+ ┌───────────────┐
+ │               │
+否               是
+ │               │
+ ↓               ↓
+不推播          建立訊息
+                 ↓
+          只保留 >= 70%
+                 ↓
+          Telegram 推播
 
-    # ========================================================
-    # CWA
-    # ========================================================
+3 小時預報
 
-    data = fetch_cwa_data(
-        yesterday
-    )
+F-D0047-005 用於建立逐 3 小時資料。
 
-    results = parse_stations(
-        data,
-        yesterday
-    )
+例如 CWA 資料：
 
-    print(
-        f"CWA 回傳目標測站資料："
-        f"{len(results)} 筆"
-    )
+09:00  40%
+12:00  70%
+15:00  80%
+18:00  60%
 
-    # ========================================================
-    # 一般雨量訊息
-    # ========================================================
 
-    weather_message = (
-        build_weather_message(
-            results,
-            requested_stations,
-            yesterday,
-        )
-    )
+Telegram 只會顯示：
 
-    print("")
+12:00～15:00｜短暫雨｜降雨70%
+15:00～18:00｜雨｜降雨80%
 
-    if weather_message:
+7 天預報
 
-        print(weather_message)
+F-D0047-007 用於建立逐日資料。
 
-    else:
+例如：
 
-        print(
-            "⚠️ 所有指定測站皆「尚無對應氣象資料」。"
-        )
+2026-09-25  40%
+2026-09-26  70%
+2026-09-27  80%
+2026-09-28  50%
 
-    # ========================================================
-    # Telegram 一般雨量訊息
-    #
-    # 只有至少一個測站有資料才發送
-    # ========================================================
 
-    if weather_message:
+Telegram 只會顯示：
 
-        telegram_send(
-            chat_id,
-            weather_message
-        )
+2026-09-26 週六｜短暫雨｜降雨70%
+2026-09-27 週日｜雨｜降雨80%
 
-        print(
-            "✅ 一般雨量訊息已發送"
-        )
+本機測試
+系統需求
 
-    else:
+Node.js：
 
-        print(
-            "⚠️ 所有指定測站皆無氣象資料，"
-            "略過 Telegram 一般雨量訊息。"
-        )
+22 以上
 
-    # ========================================================
-    # 350 mm 警報
-    #
-    # 只有至少一個測站有資料才檢查
-    # ========================================================
 
-    if results:
+本專案使用 Node.js 內建：
 
-        alert_message = (
-            build_alert_message(
-                results,
-                yesterday,
-            )
-        )
+fetch()
 
-        if alert_message:
 
-            print("")
-            print(alert_message)
+因此不需要：
 
-            telegram_send(
-                chat_id,
-                alert_message
-            )
+axios
+node-fetch
 
-            print(
-                "🚨 350 mm 警報已發送"
-            )
 
-        else:
+等 runtime dependency。
 
-            print(
-                "ℹ️ 沒有測站達到 "
-                f"{format_mm(RAIN_THRESHOLD)} mm"
-            )
+安裝
+npm ci
 
-    else:
+一般執行
+CWA_API_KEY="你的KEY" \
+TELEGRAM_BOT_TOKEN="你的TOKEN" \
+TELEGRAM_CHAT_ID="你的CHAT_ID" \
+npm run weather
 
-        print(
-            "⚠️ 所有指定測站皆無氣象資料，"
-            "略過 350 mm 警報。"
-        )
+只測試 CWA、不推 Telegram
+CWA_API_KEY="你的KEY" \
+SEND_TELEGRAM=false \
+npm run weather
 
-    # ========================================================
-    # 完成
-    # ========================================================
 
-    print("")
-    print("完成。")
+此模式會：
 
+呼叫 CWA API
 
-# ============================================================
-# Entry Point
-# ============================================================
+解析資料
 
-if __name__ == "__main__":
+顯示資料摘要
 
-    try:
+顯示 Telegram 預覽相關 Log
 
-        main()
+不實際傳送 Telegram
 
-    except Exception as exc:
+指定日期
 
-        print(
-            f"❌ 執行失敗：{exc}",
-            file=sys.stderr
-        )
+例如：
 
-        raise
+CWA_API_KEY="你的KEY" \
+SEND_TELEGRAM=false \
+INPUT_DATE="2026-09-25" \
+npm run weather
 
+指定行政區
+
+例如：
+
+CWA_API_KEY="你的KEY" \
+SEND_TELEGRAM=false \
+INPUT_LOCATIONS="桃園區,中壢區,龜山區" \
+npm run weather
+
+指定日期 + 指定行政區
+CWA_API_KEY="你的KEY" \
+SEND_TELEGRAM=false \
+INPUT_DATE="2026-09-25" \
+INPUT_LOCATIONS="桃園區,中壢區,龜山區" \
+npm run weather
+
+專案結構
+taoyuan-weather/
+├── .github/
+│   └── workflows/
+│       └── weather.yml
+├── src/
+│   ├── districts.js
+│   └── weather.js
+├── .gitignore
+├── README.md
+├── package.json
+└── package-lock.json
+
+主要檔案
+src/weather.js
+
+主要天氣處理程式。
+
+負責：
+
+CWA API 呼叫
+
+CWA JSON 解析
+
+桃園行政區篩選
+
+3 小時預報整理
+
+7 天預報整理
+
+降雨機率門檻判斷
+
+Telegram 訊息建立
+
+Telegram 推播
+
+目前降雨門檻：
+
+const POP_THRESHOLD =
+  70;
+
+
+判斷方式：
+
+pop >= POP_THRESHOLD
+
+
+因此 70% 會被視為符合條件。
+
+src/districts.js
+
+桃園市 13 行政區設定。
+
+用於：
+
+行政區名稱
+
+行政區資料
+
+API 資料篩選
+
+INPUT_LOCATIONS 驗證
+
+.github/workflows/weather.yml
+
+GitHub Actions 工作流程。
+
+負責：
+
+排程執行
+
+手動執行
+
+傳入 Workflow Inputs
+
+設定 GitHub Secrets
+
+安裝 Node.js
+
+執行 npm run weather
+
+Telegram 長訊息
+
+Telegram 單則訊息有長度限制。
+
+本專案會在約：
+
+3500 字元
+
+
+的位置進行保守分割。
+
+因此即使同一次推播包含大量行政區與預報資料，也會自動分成多則 Telegram 訊息。
+
+Node.js Dependency
+
+本專案使用 Node.js 內建：
+
+fetch()
+
+
+因此不需要：
+
+axios
+node-fetch
+
+
+等 runtime dependency。
+
+package-lock.json 仍建議提交到 GitHub，讓 GitHub Actions 可以使用：
+
+npm ci
+
+注意事項
+1. CWA API Key
+
+請勿直接把 CWA API Key 寫入：
+
+weather.js
+
+
+或：
+
+weather.yml
+
+
+建議使用 GitHub Secrets。
+
+2. Telegram Token
+
+請勿將：
+
+TELEGRAM_BOT_TOKEN
+
+
+提交到 GitHub Repository。
+
+應使用：
+
+GitHub Secrets
+
+3. 降雨機率不是降雨量
+
+本專案使用的是：
+
+降雨機率（Probability of Precipitation）
+
+
+不是：
+
+降雨量 mm
+
+
+例如：
+
+降雨機率 70%
+
+
+代表預報資料中的降雨機率達到 70%，並不代表一定會下 70 mm 的雨。
+
+版本
+v2.2.0
+
+主要修改：
+
+修正原本 F-D0047-093 HTTP 404 問題
+
+改用 F-D0047-005
+
+改用 F-D0047-007
+
+3 天逐 3 小時資料改由 F-D0047-005 取得
+
+7 天逐日資料改由 F-D0047-007 取得
+
+兩個 CWA 資料集分開取得後再整合
+
+新增降雨機率 >= 70% 推播門檻
+
+只有任一行政區、任一時段達 70% 才觸發 Telegram
+
+Telegram 只顯示降雨機率 >= 70% 的資料
+
+70% 本身會顯示在 Telegram
+
+所有資料低於 70% 時不推播
+
+沒有符合條件的行政區不顯示
+
+避免產生空的 Telegram 推播
+
+資料來源
+
+中央氣象署（CWA）
+
+本專案的天氣資料來自中央氣象署公開資料服務。
+
+License
+
+本專案依 Repository 實際設定的 License 為準。
