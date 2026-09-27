@@ -1,579 +1,1201 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
 🌤 Taoyuan Weather
-
-桃園市 13 行政區天氣預報 GitHub Actions 專案。
-
-目前版本：
-
-v2.2.0
-
-功能
 
 桃園市 13 行政區天氣預報
 
-未來 3 天逐 3 小時預報
+功能：
+- CWA F-D0047-005：未來 3 天逐 3 小時預報
+- CWA F-D0047-007：未來 1 週逐日預報
+- 桃園市 13 行政區
+- 降雨機率 >= 70% 才觸發 Telegram
+- Telegram 只顯示 >= 70% 的資料
+- 支援 INPUT_DATE
+- 支援 INPUT_LOCATIONS
+- 支援 SEND_TELEGRAM
+- Telegram 長訊息自動分割
+- 使用 Python requests
 
-未來 7 天逐日預報
-
-使用中央氣象署 CWA API
-
-Telegram Bot 推播
-
-GitHub Actions 自動執行
-
-可指定預報日期
-
-可指定行政區
-
-可設定是否推送 Telegram
-
-Telegram 自動分割長訊息
-
-使用 Node.js 內建 fetch()
-
-降雨機率達門檻才進行 Telegram 推播
-
-降雨推播規則
-
-本專案目前的降雨推播門檻為：
-
-降雨機率 >= 70%
-
-
-規則如下：
-
-降雨機率	Telegram 推播	Telegram 顯示
-0% ～ 69%	❌	❌
-70%	✅	✅
-71% ～ 100%	✅	✅
-推播條件
-
-只要：
-
-任一行政區、任一時段的降雨機率 >= 70%
-
-就會觸發整次 Telegram 推播。
-
-訊息內容
-
-Telegram 訊息只會列出：
-
-降雨機率 >= 70%
-
-
-的資料。
-
-因此：
-
-60% → 不推播、不顯示
-69% → 不推播、不顯示
-70% → 推播、顯示
-80% → 推播、顯示
-100% → 推播、顯示
-
-
-例如：
-
-📍 桃園區
-
-【未來3天・逐3小時】
-12:00～15:00｜短暫雨｜降雨70%
-15:00～18:00｜雨｜降雨80%
-
-
-70% 本身會保留在 Telegram 訊息中。
-
-如果所有行政區、所有預報時段的降雨機率都低於 70%，則：
-
-不會發送 Telegram
-
-
-也不會產生只有標題的空訊息。
-
-CWA 資料集
-
-本專案使用中央氣象署桃園市專屬資料集。
-
-未來 3 天
-F-D0047-005
-
-
-用途：
-
-桃園市未來 3 天逐 3 小時天氣預報
-
-未來 1 週
-F-D0047-007
-
-
-用途：
-
-桃園市未來 1 週天氣預報
-
-
-本專案不再使用：
-
-F-D0047-093
-
-
-目前由：
-
-F-D0047-005
-+
-F-D0047-007
-
-
-兩個資料集分別取得資料後，再於程式中整理成 Telegram 訊息。
-
-GitHub Secrets
-
-進入：
-
-Repository
-→ Settings
-→ Secrets and variables
-→ Actions
-
-
-建立以下 GitHub Actions Secrets：
+環境變數：
 
 CWA_API_KEY
 TELEGRAM_BOT_TOKEN
 TELEGRAM_CHAT_ID
 
-CWA_API_KEY
-
-中央氣象署 API 金鑰。
-
-TELEGRAM_BOT_TOKEN
-
-Telegram Bot Token。
-
-TELEGRAM_CHAT_ID
-
-接收天氣通知的 Telegram Chat ID。
-
-GitHub Actions
-
-可以從 GitHub Actions 手動執行。
-
-進入：
-
-Actions
-→ Taoyuan Weather
-→ Run workflow
-
-Workflow 參數
-input_date
-
-指定預報日期。
-
+INPUT_DATE
 例如：
-
 2026-09-25
 
-
-留空：
-
-使用台灣當天日期
-
-
-程式會使用：
-
-Asia/Taipei
-
-
-時區取得日期。
-
-input_locations
-
-指定要處理的桃園行政區。
-
+INPUT_LOCATIONS
 例如：
-
-桃園區
-
-
-或：
-
 桃園區,中壢區,龜山區
 
+SEND_TELEGRAM
+true / false
 
-留空：
+Python：
+3.10+
+"""
 
-桃園市 13 行政區全部處理
+import os
+import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
+import requests
 
-未知的行政區名稱會被忽略。
 
-如果最後沒有任何有效行政區，程式會直接停止並回報錯誤。
+# ============================================================
+# 設定
+# ============================================================
 
-send_telegram
+POP_THRESHOLD = 70
 
-控制是否推送 Telegram。
+CWA_3DAY_DATASET = "F-D0047-005"
+CWA_7DAY_DATASET = "F-D0047-007"
 
-設定：
+CWA_BASE_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore"
 
-true
+TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 
+TELEGRAM_MAX_LENGTH = 3500
 
-代表：
 
-取得 CWA 資料
-+
-解析資料
-+
-符合降雨門檻時推送 Telegram
+# ============================================================
+# 桃園 13 行政區
+# ============================================================
 
+DISTRICTS = [
+    "桃園區",
+    "中壢區",
+    "龜山區",
+    "八德區",
+    "蘆竹區",
+    "大園區",
+    "觀音區",
+    "新屋區",
+    "楊梅區",
+    "平鎮區",
+    "復興區",
+    "龍潭區",
+    "大溪區",
+]
 
-設定：
 
-false
+# ============================================================
+# 工具
+# ============================================================
 
+def log(message: str) -> None:
+    """輸出 GitHub Actions Log。"""
+    print(message, flush=True)
 
-代表：
 
-取得 CWA 資料
-+
-解析資料
-+
-輸出 GitHub Actions Log
+def get_env_bool(name: str, default: bool = False) -> bool:
+    """取得 boolean 環境變數。"""
 
+    value = os.getenv(name)
 
-但：
+    if value is None:
+        return default
 
-不推送 Telegram
+    return value.strip().lower() in {
+        "true",
+        "1",
+        "yes",
+        "y",
+        "on",
+    }
 
-Telegram 推播流程
 
-程式執行後會依照以下流程：
+def get_input_date() -> str:
+    """
+    取得指定日期。
 
-CWA API
-   ↓
-取得 F-D0047-005
-   ↓
-取得 F-D0047-007
-   ↓
-解析桃園各行政區
-   ↓
-檢查降雨機率
-   ↓
-是否有任一筆 >= 70%？
-   ↓
- ┌───────────────┐
- │               │
-否               是
- │               │
- ↓               ↓
-不推播          建立訊息
-                 ↓
-          只保留 >= 70%
-                 ↓
-          Telegram 推播
+    INPUT_DATE 留空：
+    使用 Asia/Taipei 當天日期。
+    """
 
-3 小時預報
+    value = os.getenv("INPUT_DATE", "").strip()
 
-F-D0047-005 用於建立逐 3 小時資料。
+    if not value:
+        return datetime.now(TAIPEI_TZ).strftime("%Y-%m-%d")
 
-例如 CWA 資料：
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise ValueError(
+            f"INPUT_DATE 格式錯誤：{value}，應為 YYYY-MM-DD"
+        )
 
-09:00  40%
-12:00  70%
-15:00  80%
-18:00  60%
+    return value
 
 
-Telegram 只會顯示：
+def get_input_locations() -> list[str]:
+    """
+    取得指定行政區。
 
-12:00～15:00｜短暫雨｜降雨70%
-15:00～18:00｜雨｜降雨80%
+    留空：
+    使用全部 13 行政區。
 
-7 天預報
+    未知行政區：
+    忽略。
 
-F-D0047-007 用於建立逐日資料。
+    如果最後沒有有效行政區：
+    直接停止。
+    """
 
-例如：
+    value = os.getenv("INPUT_LOCATIONS", "").strip()
 
-2026-09-25  40%
-2026-09-26  70%
-2026-09-27  80%
-2026-09-28  50%
+    if not value:
+        return DISTRICTS.copy()
 
+    locations = []
 
-Telegram 只會顯示：
+    for item in value.split(","):
+        district = item.strip()
 
-2026-09-26 週六｜短暫雨｜降雨70%
-2026-09-27 週日｜雨｜降雨80%
+        if not district:
+            continue
 
-本機測試
-系統需求
+        if district in DISTRICTS:
+            if district not in locations:
+                locations.append(district)
+        else:
+            log(f"⚠️ 忽略未知行政區：{district}")
 
-Node.js：
+    if not locations:
+        raise ValueError(
+            "INPUT_LOCATIONS 沒有任何有效的桃園行政區。"
+        )
 
-22 以上
+    return locations
 
 
-本專案使用 Node.js 內建：
+def safe_int(value):
+    """安全轉換整數。"""
 
-fetch()
+    if value is None:
+        return None
 
+    if isinstance(value, int):
+        return value
 
-因此不需要：
+    text = str(value).strip()
 
-axios
-node-fetch
+    if not text:
+        return None
 
+    text = (
+        text.replace("%", "")
+        .replace("％", "")
+        .strip()
+    )
 
-等 runtime dependency。
+    try:
+        return int(float(text))
+    except ValueError:
+        return None
 
-安裝
-npm ci
 
-一般執行
-CWA_API_KEY="你的KEY" \
-TELEGRAM_BOT_TOKEN="你的TOKEN" \
-TELEGRAM_CHAT_ID="你的CHAT_ID" \
-npm run weather
+def format_pop(value) -> str:
+    """格式化降雨機率。"""
 
-只測試 CWA、不推 Telegram
-CWA_API_KEY="你的KEY" \
-SEND_TELEGRAM=false \
-npm run weather
+    number = safe_int(value)
 
+    if number is None:
+        return "?"
 
-此模式會：
+    return f"{number}%"
 
-呼叫 CWA API
 
-解析資料
+def get_pop(value) -> int | None:
+    """取得降雨機率整數。"""
 
-顯示資料摘要
+    return safe_int(value)
 
-顯示 Telegram 預覽相關 Log
 
-不實際傳送 Telegram
+def split_telegram_message(
+    message: str,
+    max_length: int = TELEGRAM_MAX_LENGTH,
+) -> list[str]:
+    """
+    Telegram 長訊息分割。
 
-指定日期
+    優先以換行分割，
+    避免切斷天氣資料。
+    """
 
-例如：
+    if len(message) <= max_length:
+        return [message]
 
-CWA_API_KEY="你的KEY" \
-SEND_TELEGRAM=false \
-INPUT_DATE="2026-09-25" \
-npm run weather
+    chunks = []
+    current = ""
 
-指定行政區
+    for line in message.splitlines(keepends=True):
 
-例如：
+        if len(current) + len(line) <= max_length:
+            current += line
+            continue
 
-CWA_API_KEY="你的KEY" \
-SEND_TELEGRAM=false \
-INPUT_LOCATIONS="桃園區,中壢區,龜山區,八德區,蘆竹區,大園區,觀音區,新屋區,楊梅區,平鎮區,復興區,龍潭區,大溪區" \
-npm run weather
+        if current:
+            chunks.append(current.rstrip())
+            current = ""
 
-指定日期 + 指定行政區
-CWA_API_KEY="你的KEY" \
-SEND_TELEGRAM=false \
-INPUT_DATE="2026-09-25" \
-INPUT_LOCATIONS="桃園區,中壢區,龜山區,八德區,蘆竹區,大園區,觀音區,新屋區,楊梅區,平鎮區,復興區,龍潭區,大溪區" \
-npm run weather
+        # 單行本身超過限制
+        while len(line) > max_length:
+            chunks.append(line[:max_length])
+            line = line[max_length:]
 
-專案結構
-taoyuan-weather/
-├── .github/
-│   └── workflows/
-│       └── weather.yml
-├── src/
-│   ├── districts.js
-│   └── weather.js
-├── .gitignore
-├── README.md
-├── package.json
-└── package-lock.json
+        current = line
 
-主要檔案
-src/weather.js
+    if current:
+        chunks.append(current.rstrip())
 
-主要天氣處理程式。
+    return chunks
 
-負責：
 
-CWA API 呼叫
+# ============================================================
+# CWA API
+# ============================================================
 
-CWA JSON 解析
+def get_cwa_api_key() -> str:
+    """取得 CWA API Key。"""
 
-桃園行政區篩選
+    api_key = os.getenv("CWA_API_KEY", "").strip()
 
-3 小時預報整理
+    if not api_key:
+        raise RuntimeError(
+            "找不到 CWA_API_KEY，請設定環境變數或 GitHub Secret。"
+        )
 
-7 天預報整理
+    return api_key
 
-降雨機率門檻判斷
 
-Telegram 訊息建立
+def fetch_cwa_dataset(
+    dataset_id: str,
+    api_key: str,
+) -> dict:
+    """
+    呼叫 CWA API。
+    """
 
-Telegram 推播
+    url = f"{CWA_BASE_URL}/{dataset_id}"
 
-目前降雨門檻：
+    params = {
+        "Authorization": api_key,
+        "format": "JSON",
+    }
 
-const POP_THRESHOLD =
-  70;
+    log(f"🌐 呼叫 CWA Dataset：{dataset_id}")
 
+    response = requests.get(
+        url,
+        params=params,
+        timeout=30,
+    )
 
-判斷方式：
+    log(
+        f"HTTP {response.status_code} "
+        f"- {dataset_id}"
+    )
 
-pop >= POP_THRESHOLD
+    response.raise_for_status()
 
+    data = response.json()
 
-因此 70% 會被視為符合條件。
+    success = data.get("success")
 
-src/districts.js
+    if success is False:
+        raise RuntimeError(
+            f"CWA API 回傳失敗：{data}"
+        )
 
-桃園市 13 行政區設定。
+    return data
 
-用於：
 
-行政區名稱
+# ============================================================
+# CWA JSON 解析
+# ============================================================
 
-行政區資料
+def extract_locations(data: dict) -> list[dict]:
+    """
+    取得 CWA locations。
 
-API 資料篩選
+    CWA 資料結構可能因資料集版本略有不同，
+    因此這裡做多種格式相容。
+    """
 
-INPUT_LOCATIONS 驗證
+    records = data.get("records", {})
 
-.github/workflows/weather.yml
+    if isinstance(records, list):
+        return records
 
-GitHub Actions 工作流程。
+    if not isinstance(records, dict):
+        return []
 
-負責：
+    locations = records.get("Locations")
 
-排程執行
+    if isinstance(locations, list):
+        result = []
 
-手動執行
+        for item in locations:
+            if not isinstance(item, dict):
+                continue
 
-傳入 Workflow Inputs
+            if "Location" in item:
+                location = item["Location"]
 
-設定 GitHub Secrets
+                if isinstance(location, list):
+                    result.extend(location)
 
-安裝 Node.js
+                elif isinstance(location, dict):
+                    result.append(location)
 
-執行 npm run weather
+            else:
+                result.append(item)
 
-Telegram 長訊息
+        return result
 
-Telegram 單則訊息有長度限制。
+    locations = records.get("locations")
 
-本專案會在約：
+    if isinstance(locations, list):
+        return locations
 
-3500 字元
+    return []
 
 
-的位置進行保守分割。
+def extract_location_name(location: dict) -> str:
+    """
+    取得行政區名稱。
+    """
 
-因此即使同一次推播包含大量行政區與預報資料，也會自動分成多則 Telegram 訊息。
+    return (
+        location.get("LocationName")
+        or location.get("locationName")
+        or location.get("Name")
+        or ""
+    ).strip()
 
-Node.js Dependency
 
-本專案使用 Node.js 內建：
+def extract_weather_elements(location: dict) -> list[dict]:
+    """
+    取得 weather element。
+    """
 
-fetch()
+    elements = (
+        location.get("WeatherElement")
+        or location.get("weatherElement")
+        or []
+    )
 
+    if isinstance(elements, dict):
+        return [elements]
 
-因此不需要：
+    if isinstance(elements, list):
+        return elements
 
-axios
-node-fetch
+    return []
 
 
-等 runtime dependency。
+def element_name(element: dict) -> str:
+    return (
+        element.get("ElementName")
+        or element.get("elementName")
+        or element.get("Name")
+        or ""
+    ).strip()
 
-package-lock.json 仍建議提交到 GitHub，讓 GitHub Actions 可以使用：
 
-npm ci
+def find_element(
+    location: dict,
+    names: list[str],
+) -> dict | None:
+    """
+    找尋指定 WeatherElement。
+    """
 
-注意事項
-1. CWA API Key
+    elements = extract_weather_elements(location)
 
-請勿直接把 CWA API Key 寫入：
+    for element in elements:
+        name = element_name(element)
 
-weather.js
+        for target in names:
+            if name == target:
+                return element
 
+    return None
 
-或：
 
-weather.yml
+def extract_times(element: dict) -> list[dict]:
+    """
+    取得 Time。
+    """
 
+    times = (
+        element.get("Time")
+        or element.get("time")
+        or []
+    )
 
-建議使用 GitHub Secrets。
+    if isinstance(times, dict):
+        return [times]
 
-2. Telegram Token
+    if isinstance(times, list):
+        return times
 
-請勿將：
+    return []
 
-TELEGRAM_BOT_TOKEN
 
+def extract_value(value):
+    """
+    CWA Value 相容處理。
+    """
 
-提交到 GitHub Repository。
+    if isinstance(value, dict):
+        for key in (
+            "value",
+            "Value",
+            "百分比",
+            "ProbabilityOfPrecipitation",
+        ):
+            if key in value:
+                return value[key]
 
-應使用：
+        return None
 
-GitHub Secrets
+    return value
 
-3. 降雨機率不是降雨量
 
-本專案使用的是：
+# ============================================================
+# 3 小時資料
+# ============================================================
 
-降雨機率（Probability of Precipitation）
+def parse_3day_location(location: dict) -> list[dict]:
+    """
+    解析 F-D0047-005。
+    """
 
+    result = []
 
-不是：
+    district = extract_location_name(location)
 
-降雨量 mm
+    if not district:
+        return result
 
+    pop_element = find_element(
+        location,
+        [
+            "PoP6h",
+            "PoP",
+            "ProbabilityOfPrecipitation",
+            "降雨機率",
+        ],
+    )
 
-例如：
+    weather_element = find_element(
+        location,
+        [
+            "Wx",
+            "WeatherDescription",
+            "天氣現象",
+            "天氣預報綜合描述",
+        ],
+    )
 
-降雨機率 70%
+    if not pop_element:
+        return result
 
+    pop_times = extract_times(pop_element)
+    weather_times = (
+        extract_times(weather_element)
+        if weather_element
+        else []
+    )
 
-代表預報資料中的降雨機率達到 70%，並不代表一定會下 70 mm 的雨。
+    for index, time_data in enumerate(pop_times):
 
-版本
-v2.2.0
+        start_time = (
+            time_data.get("StartTime")
+            or time_data.get("startTime")
+            or ""
+        )
 
-主要修改：
+        end_time = (
+            time_data.get("EndTime")
+            or time_data.get("endTime")
+            or ""
+        )
 
-修正原本 F-D0047-093 HTTP 404 問題
+        value = (
+            time_data.get("ElementValue")
+            or time_data.get("elementValue")
+            or time_data.get("Value")
+            or time_data.get("value")
+        )
 
-改用 F-D0047-005
+        if isinstance(value, list) and value:
+            value = value[0]
 
-改用 F-D0047-007
+        pop = None
 
-3 天逐 3 小時資料改由 F-D0047-005 取得
+        if isinstance(value, dict):
+            pop = (
+                value.get("ProbabilityOfPrecipitation")
+                or value.get("PoP")
+                or value.get("value")
+                or value.get("Value")
+            )
+        else:
+            pop = value
 
-7 天逐日資料改由 F-D0047-007 取得
+        pop = get_pop(pop)
 
-兩個 CWA 資料集分開取得後再整合
+        if pop is None:
+            continue
 
-新增降雨機率 >= 70% 推播門檻
+        weather = ""
 
-只有任一行政區、任一時段達 70% 才觸發 Telegram
+        if index < len(weather_times):
 
-Telegram 只顯示降雨機率 >= 70% 的資料
+            weather_data = weather_times[index]
 
-70% 本身會顯示在 Telegram
+            weather_value = (
+                weather_data.get("ElementValue")
+                or weather_data.get("elementValue")
+                or weather_data.get("Value")
+                or weather_data.get("value")
+            )
 
-所有資料低於 70% 時不推播
+            if isinstance(weather_value, list) and weather_value:
+                weather_value = weather_value[0]
 
-沒有符合條件的行政區不顯示
+            if isinstance(weather_value, dict):
+                weather = (
+                    weather_value.get("Weather")
+                    or weather_value.get("weather")
+                    or weather_value.get("value")
+                    or weather_value.get("Value")
+                    or ""
+                )
+            elif weather_value is not None:
+                weather = str(weather_value)
 
-避免產生空的 Telegram 推播
+        if pop < POP_THRESHOLD:
+            continue
 
-資料來源
+        result.append(
+            {
+                "district": district,
+                "start": start_time,
+                "end": end_time,
+                "weather": weather or "降雨",
+                "pop": pop,
+            }
+        )
 
-中央氣象署（CWA）
+    return result
 
-本專案的天氣資料來自中央氣象署公開資料服務。
 
-License
+def format_time_range(
+    start: str,
+    end: str,
+) -> str:
+    """
+    將 CWA 時間格式轉成：
 
-本專案依 Repository 實際設定的 License 為準。
+    12:00～15:00
+    """
+
+    def format_one(value: str) -> str:
+
+        if not value:
+            return ""
+
+        try:
+            dt = datetime.fromisoformat(
+                value.replace("Z", "+00:00")
+            )
+
+            return dt.astimezone(
+                TAIPEI_TZ
+            ).strftime("%H:%M")
+
+        except Exception:
+            return value[-5:] if len(value) >= 5 else value
+
+    start_text = format_one(start)
+    end_text = format_one(end)
+
+    if start_text and end_text:
+        return f"{start_text}～{end_text}"
+
+    return start_text or end_text
+
+
+# ============================================================
+# 7 天資料
+# ============================================================
+
+def parse_7day_location(location: dict) -> list[dict]:
+    """
+    解析 F-D0047-007。
+
+    只保留 >= 70% 的資料。
+    """
+
+    result = []
+
+    district = extract_location_name(location)
+
+    if not district:
+        return result
+
+    pop_element = find_element(
+        location,
+        [
+            "PoP12h",
+            "PoP",
+            "ProbabilityOfPrecipitation",
+            "降雨機率",
+        ],
+    )
+
+    weather_element = find_element(
+        location,
+        [
+            "Wx",
+            "WeatherDescription",
+            "天氣現象",
+            "天氣預報綜合描述",
+        ],
+    )
+
+    if not pop_element:
+        return result
+
+    pop_times = extract_times(pop_element)
+
+    weather_times = (
+        extract_times(weather_element)
+        if weather_element
+        else []
+    )
+
+    for index, time_data in enumerate(pop_times):
+
+        start_time = (
+            time_data.get("StartTime")
+            or time_data.get("startTime")
+            or ""
+        )
+
+        end_time = (
+            time_data.get("EndTime")
+            or time_data.get("endTime")
+            or ""
+        )
+
+        value = (
+            time_data.get("ElementValue")
+            or time_data.get("elementValue")
+            or time_data.get("Value")
+            or time_data.get("value")
+        )
+
+        if isinstance(value, list) and value:
+            value = value[0]
+
+        pop = None
+
+        if isinstance(value, dict):
+            pop = (
+                value.get("ProbabilityOfPrecipitation")
+                or value.get("PoP")
+                or value.get("value")
+                or value.get("Value")
+            )
+        else:
+            pop = value
+
+        pop = get_pop(pop)
+
+        if pop is None:
+            continue
+
+        if pop < POP_THRESHOLD:
+            continue
+
+        weather = ""
+
+        if index < len(weather_times):
+
+            weather_data = weather_times[index]
+
+            weather_value = (
+                weather_data.get("ElementValue")
+                or weather_data.get("elementValue")
+                or weather_data.get("Value")
+                or weather_data.get("value")
+            )
+
+            if isinstance(weather_value, list) and weather_value:
+                weather_value = weather_value[0]
+
+            if isinstance(weather_value, dict):
+                weather = (
+                    weather_value.get("Weather")
+                    or weather_value.get("weather")
+                    or weather_value.get("value")
+                    or weather_value.get("Value")
+                    or ""
+                )
+            elif weather_value is not None:
+                weather = str(weather_value)
+
+        result.append(
+            {
+                "district": district,
+                "start": start_time,
+                "end": end_time,
+                "weather": weather or "降雨",
+                "pop": pop,
+            }
+        )
+
+    return result
+
+
+# ============================================================
+# Telegram 訊息
+# ============================================================
+
+def build_message(
+    input_date: str,
+    selected_districts: list[str],
+    hourly_data: list[dict],
+    daily_data: list[dict],
+) -> str | None:
+    """
+    建立 Telegram 訊息。
+
+    如果所有資料都 < 70%，
+    回傳 None。
+    """
+
+    if not hourly_data and not daily_data:
+        return None
+
+    lines = []
+
+    lines.append("🌤 桃園市降雨預報")
+    lines.append(
+        f"📅 預報日期：{input_date}"
+    )
+    lines.append(
+        f"🌧 降雨機率門檻：{POP_THRESHOLD}%"
+    )
+    lines.append("")
+
+    for district in selected_districts:
+
+        district_hourly = [
+            item
+            for item in hourly_data
+            if item["district"] == district
+        ]
+
+        district_daily = [
+            item
+            for item in daily_data
+            if item["district"] == district
+        ]
+
+        if not district_hourly and not district_daily:
+            continue
+
+        lines.append(f"📍 {district}")
+
+        if district_hourly:
+
+            lines.append("")
+            lines.append("【未來3天・逐3小時】")
+
+            for item in district_hourly:
+
+                time_range = format_time_range(
+                    item["start"],
+                    item["end"],
+                )
+
+                lines.append(
+                    f"{time_range}"
+                    f"｜{item['weather']}"
+                    f"｜降雨{item['pop']}%"
+                )
+
+        if district_daily:
+
+            lines.append("")
+            lines.append("【未來7天・逐日】")
+
+            for item in district_daily:
+
+                date_text = format_date_with_weekday(
+                    item["start"]
+                )
+
+                lines.append(
+                    f"{date_text}"
+                    f"｜{item['weather']}"
+                    f"｜降雨{item['pop']}%"
+                )
+
+        lines.append("")
+
+    message = "\n".join(lines).strip()
+
+    if not message:
+        return None
+
+    return message
+
+
+def format_date_with_weekday(value: str) -> str:
+    """
+    日期格式：
+
+    2026-09-27 週日
+    """
+
+    weekdays = [
+        "週一",
+        "週二",
+        "週三",
+        "週四",
+        "週五",
+        "週六",
+        "週日",
+    ]
+
+    try:
+        dt = datetime.fromisoformat(
+            value.replace("Z", "+00:00")
+        )
+
+        dt = dt.astimezone(TAIPEI_TZ)
+
+        return (
+            f"{dt.strftime('%Y-%m-%d')} "
+            f"{weekdays[dt.weekday()]}"
+        )
+
+    except Exception:
+
+        if len(value) >= 10:
+            return value[:10]
+
+        return value
+
+
+# ============================================================
+# Telegram
+# ============================================================
+
+def send_telegram_message(
+    message: str,
+) -> None:
+    """
+    傳送 Telegram。
+
+    Telegram 訊息會自動分割。
+    """
+
+    bot_token = os.getenv(
+        "TELEGRAM_BOT_TOKEN",
+        "",
+    ).strip()
+
+    chat_id = os.getenv(
+        "TELEGRAM_CHAT_ID",
+        "",
+    ).strip()
+
+    if not bot_token:
+        raise RuntimeError(
+            "找不到 TELEGRAM_BOT_TOKEN。"
+        )
+
+    if not chat_id:
+        raise RuntimeError(
+            "找不到 TELEGRAM_CHAT_ID。"
+        )
+
+    url = (
+        f"https://api.telegram.org/"
+        f"bot{bot_token}/sendMessage"
+    )
+
+    chunks = split_telegram_message(message)
+
+    log(
+        f"📨 Telegram 訊息共 {len(chunks)} 則"
+    )
+
+    for index, chunk in enumerate(chunks, start=1):
+
+        payload = {
+            "chat_id": chat_id,
+            "text": chunk,
+        }
+
+        response = requests.post(
+            url,
+            json=payload,
+            timeout=30,
+        )
+
+        log(
+            f"Telegram {index}/{len(chunks)} "
+            f"HTTP {response.status_code}"
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        if not data.get("ok"):
+            raise RuntimeError(
+                f"Telegram API 失敗：{data}"
+            )
+
+
+# ============================================================
+# 主程式
+# ============================================================
+
+def main() -> int:
+
+    log("=" * 60)
+    log("🌤 Taoyuan Weather")
+    log("=" * 60)
+
+    try:
+
+        input_date = get_input_date()
+
+        selected_districts = (
+            get_input_locations()
+        )
+
+        send_telegram = get_env_bool(
+            "SEND_TELEGRAM",
+            default=True,
+        )
+
+        api_key = get_cwa_api_key()
+
+        log(f"📅 INPUT_DATE：{input_date}")
+
+        log(
+            "📍 行政區："
+            + ", ".join(selected_districts)
+        )
+
+        log(
+            f"📨 SEND_TELEGRAM："
+            f"{send_telegram}"
+        )
+
+        log(
+            f"🌧 降雨門檻："
+            f"{POP_THRESHOLD}%"
+        )
+
+        # ----------------------------------------------------
+        # F-D0047-005
+        # ----------------------------------------------------
+
+        data_3day = fetch_cwa_dataset(
+            CWA_3DAY_DATASET,
+            api_key,
+        )
+
+        locations_3day = extract_locations(
+            data_3day
+        )
+
+        log(
+            f"📊 F-D0047-005 行政區資料："
+            f"{len(locations_3day)}"
+        )
+
+        hourly_data = []
+
+        for location in locations_3day:
+
+            district = extract_location_name(
+                location
+            )
+
+            if district not in selected_districts:
+                continue
+
+            items = parse_3day_location(
+                location
+            )
+
+            hourly_data.extend(items)
+
+        # ----------------------------------------------------
+        # F-D0047-007
+        # ----------------------------------------------------
+
+        data_7day = fetch_cwa_dataset(
+            CWA_7DAY_DATASET,
+            api_key,
+        )
+
+        locations_7day = extract_locations(
+            data_7day
+        )
+
+        log(
+            f"📊 F-D0047-007 行政區資料："
+            f"{len(locations_7day)}"
+        )
+
+        daily_data = []
+
+        for location in locations_7day:
+
+            district = extract_location_name(
+                location
+            )
+
+            if district not in selected_districts:
+                continue
+
+            items = parse_7day_location(
+                location
+            )
+
+            daily_data.extend(items)
+
+        # ----------------------------------------------------
+        # 統計
+        # ----------------------------------------------------
+
+        log("")
+        log("=" * 60)
+        log("📊 降雨門檻檢查")
+        log("=" * 60)
+
+        log(
+            f"3 小時符合資料："
+            f"{len(hourly_data)}"
+        )
+
+        log(
+            f"7 天符合資料："
+            f"{len(daily_data)}"
+        )
+
+        total = (
+            len(hourly_data)
+            + len(daily_data)
+        )
+
+        if total == 0:
+
+            log("")
+            log(
+                f"✅ 所有資料降雨機率 "
+                f"< {POP_THRESHOLD}%"
+            )
+
+            log(
+                "📨 不發送 Telegram"
+            )
+
+            return 0
+
+        # ----------------------------------------------------
+        # 建立 Telegram
+        # ----------------------------------------------------
+
+        message = build_message(
+            input_date=input_date,
+            selected_districts=selected_districts,
+            hourly_data=hourly_data,
+            daily_data=daily_data,
+        )
+
+        if not message:
+
+            log(
+                "ℹ️ 沒有符合條件的 Telegram 訊息"
+            )
+
+            return 0
+
+        log("")
+        log("=" * 60)
+        log("📨 Telegram 預覽")
+        log("=" * 60)
+        log(message)
+        log("=" * 60)
+
+        # ----------------------------------------------------
+        # Telegram
+        # ----------------------------------------------------
+
+        if send_telegram:
+
+            log("📨 開始發送 Telegram...")
+
+            send_telegram_message(
+                message
+            )
+
+            log(
+                "✅ Telegram 發送完成"
+            )
+
+        else:
+
+            log(
+                "ℹ️ SEND_TELEGRAM=false"
+            )
+
+            log(
+                "ℹ️ 不實際發送 Telegram"
+            )
+
+        log("")
+        log("✅ Weather job 完成")
+
+        return 0
+
+    except requests.RequestException as exc:
+
+        log("")
+        log("❌ HTTP Request 錯誤")
+        log(str(exc))
+
+        return 1
+
+    except Exception as exc:
+
+        log("")
+        log("❌ 執行失敗")
+        log(f"{type(exc).__name__}: {exc}")
+
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
