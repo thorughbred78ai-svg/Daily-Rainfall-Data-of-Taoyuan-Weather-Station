@@ -1,40 +1,185 @@
-# -
-地面測站每日雨量資料
+# -🌤 Taoyuan Weather
 
-🌧️ 桃園地面測站每日雨量
+桃園市 13 行政區天氣預報 GitHub Actions 專案。
 
-使用 GitHub Actions 定時取得中央氣象署（CWA）地面測站每日雨量資料，並透過 Telegram Bot 發送通知。
+本專案使用中央氣象署（CWA）公開資料，取得桃園市未來 3 天及未來 1 週天氣預報，並依照降雨機率門檻決定是否透過 Telegram Bot 推播。
 
-本專案將原本 n8n Workflow 改為 GitHub Actions + Python，不需要維持 n8n 伺服器常駐。
+目前版本
+
+v2.3.0
 
 功能
 
-每 8 小時自動執行一次
+桃園市 13 行政區天氣預報
 
-使用台灣時區 Asia/Taipei
+未來 3 天預報
 
-取得前一天的地面測站雨量資料
+未來 3 天逐時段降雨機率
 
-使用中央氣象署 Open Data API
+未來 7 天逐日預報
 
-支援指定桃園地區測站
+使用中央氣象署 CWA API
 
-透過 Telegram Bot 發送每日雨量
+使用 CWA F-D0047-005
 
-雨量達 350 mm 以上時額外發送警報
+使用 CWA F-D0047-007
 
-支援 GitHub Actions 手動執行
+Telegram Bot 推播
 
-手動執行時可以指定測站
+GitHub Actions 自動執行
 
-T（Trace，微量降雨）視為 0 mm
+GitHub Actions 手動執行
 
-不需要 n8n
+可指定預報日期
 
-不需要自行維護伺服器
+可指定行政區
 
-專案結構
-.
+可設定是否推送 Telegram
+
+Telegram 長訊息自動分割
+
+降雨機率達門檻才進行 Telegram 推播
+
+Python 3.12
+
+使用 requests 呼叫 API
+
+🌧️ 降雨推播規則
+
+本專案目前的降雨推播門檻：
+
+降雨機率 >= 70%
+
+
+判斷方式：
+
+pop >= 70
+
+
+因此 70% 本身會觸發推播。
+
+推播規則
+降雨機率	Telegram 推播	Telegram 顯示
+0% ～ 69%	❌	❌
+70%	✅	✅
+71% ～ 100%	✅	✅
+
+例如：
+
+60% → 不推播、不顯示
+69% → 不推播、不顯示
+70% → 推播、顯示
+80% → 推播、顯示
+100% → 推播、顯示
+
+觸發條件
+
+只要：
+
+任一行政區
++
+任一預報時段
++
+降雨機率 >= 70%
+
+
+就會觸發整次 Telegram 推播。
+
+📱 Telegram 訊息內容
+
+Telegram 只會顯示降雨機率 >= 70% 的資料。
+
+例如 CWA 資料：
+
+09:00  40%
+12:00  70%
+15:00  80%
+18:00  60%
+
+
+Telegram 只顯示：
+
+12:00～15:00｜短暫雨｜降雨70%
+15:00～18:00｜雨｜降雨80%
+
+
+其中：
+
+70%
+
+
+會保留在 Telegram 訊息中。
+
+如果所有行政區、所有預報資料都低於 70%：
+
+不發送 Telegram
+
+
+也不會產生只有標題的空訊息。
+
+🗺️ 桃園 13 行政區
+
+本專案處理以下桃園市行政區：
+
+桃園區
+中壢區
+龜山區
+八德區
+蘆竹區
+大園區
+觀音區
+新屋區
+楊梅區
+平鎮區
+復興區
+龍潭區
+大溪區
+
+🌦️ CWA 資料集
+
+本專案使用中央氣象署桃園市專屬資料集。
+
+未來 3 天
+F-D0047-005
+
+
+用途：
+
+桃園市未來 3 天天氣預報
+
+
+主要用於取得較短時間尺度的預報資料。
+
+未來 1 週
+F-D0047-007
+
+
+用途：
+
+桃園市未來 1 週天氣預報
+
+
+主要用於建立逐日預報資料。
+
+已停止使用
+
+本專案不再使用：
+
+F-D0047-093
+
+
+目前使用：
+
+F-D0047-005
++
+F-D0047-007
+
+
+兩個資料集分別呼叫 CWA API，再於 Python 程式中整理資料。
+
+📂 專案結構
+Daily-Rainfall-Data-of-Taoyuan-Weather-Station/
+│
 ├── .github/
 │   └── workflows/
 │       └── weather.yml
@@ -42,714 +187,800 @@ T（Trace，微量降雨）視為 0 mm
 ├── scripts/
 │   └── weather.py
 │
-└── README.md
+├── requirements.txt
+│
+├── README.md
+│
+└── .gitignore
 
-使用資料來源
+🐍 Python
 
-本專案使用中央氣象署 Open Data API：
+本專案目前使用：
 
-https://opendata.cwa.gov.tw/api/v1/rest/datastore/C-B0025-001
+Python 3.12
 
-
-資料集：
-
-C-B0025-001
-
-
-主要使用：
-
-DataType=stationObsTimes
-
-
-查詢前一天的資料。
-
-自動排程
 
 GitHub Actions 使用：
 
-on:
-  schedule:
-    - cron: "0 0,8,16 * * *"
-      timezone: "Asia/Taipei"
+python-version: "3.12"
 
 
-因此排程時間為台灣時間：
-
-台灣時間	執行
-00:00	✅
-08:00	✅
-16:00	✅
-其他時間	-
-
-時區使用：
-
-Asia/Taipei
-
-
-不需要自行將台灣時間轉換成 UTC。
-
-GitHub Actions 的排程可能因 GitHub 平台負載而產生些微延遲，因此不保證精確到秒。
-
-查詢測站
-
-目前設定的測站如下：
-
-大溪永福
-
-中大臨海站
-
-觀音工業區
-
-八德蔬果
-
-新興坑尾
-
-國二E009K
-
-國一高架N063K
-
-國三N072K
-
-國三N063K
-
-國一S072K
-
-西濱S032K
-
-中央大學
-
-茶改場
-
-東眼山
-
-蘆竹
-
-新屋
-
-復興
-
-八德
-
-大溪
-
-平鎮
-
-楊梅
-
-龍潭
-
-龜山
-
-竹圍
-
-中德
-
-水尾
-
-四稜
-
-桃園
-
-觀音
-
-中壢
-
-預設 Telegram 查詢測站
-
-自動排程預設發送：
-
-新屋
-八德
-蘆竹
-龜山
-中壢
-
-
-也就是：
-
-DEFAULT_STATIONS = [
-    "新屋",
-    "八德",
-    "蘆竹",
-    "龜山",
-    "中壢",
-]
-
-
-如果要修改自動通知的測站，可以修改：
+Python 程式：
 
 scripts/weather.py
 
+📦 Python Dependency
 
-中的：
+本專案使用：
 
-DEFAULT_STATIONS
+requests
+
+
+安裝依賴：
+
+python -m pip install -r requirements.txt
+
+
+requirements.txt：
+
+requests>=2.31,<3
 
 🔐 GitHub Secrets
-
-本專案需要三個 GitHub Secrets。
 
 進入：
 
 Repository
-    ↓
-Settings
-    ↓
-Secrets and variables
-    ↓
-Actions
-    ↓
-New repository secret
+→ Settings
+→ Secrets and variables
+→ Actions
 
 
-建立以下三個 Secret：
+建立以下 Repository Secrets：
 
 CWA_API_KEY
 TELEGRAM_BOT_TOKEN
 TELEGRAM_CHAT_ID
 
-1. CWA_API_KEY
+🔑 CWA_API_KEY
 
-中央氣象署 Open Data API 授權碼。
+中央氣象署 Open Data API 金鑰。
 
-Secret 名稱：
+請勿直接寫入：
 
-CWA_API_KEY
-
-
-內容填入你的 CWA API Key。
-
-例如：
-
-CWA_API_KEY
-└── CWA API 授權碼
+scripts/weather.py
 
 
-不要直接把 API Key 寫在：
+也不要寫入：
 
-weather.py
-
-
-或：
-
-weather.yml
+.github/workflows/weather.yml
 
 
-裡面。
+應使用：
 
-2. TELEGRAM_BOT_TOKEN
+GitHub Secrets
+
+🤖 TELEGRAM_BOT_TOKEN
 
 Telegram Bot Token。
 
-Secret 名稱：
+請勿直接提交到 GitHub Repository。
 
-TELEGRAM_BOT_TOKEN
+應使用：
 
+GitHub Secrets
 
-例如：
+💬 TELEGRAM_CHAT_ID
 
-123456789:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+Telegram Bot 接收訊息的 Chat ID。
 
+同樣建議使用：
 
-不要把 Bot Token 提交到 Git。
+GitHub Secrets
 
-3. TELEGRAM_CHAT_ID
+⚙️ GitHub Actions
 
-Telegram 接收通知的 Chat ID。
+Workflow：
 
-Secret 名稱：
+.github/workflows/weather.yml
 
-TELEGRAM_CHAT_ID
 
+Workflow 名稱：
 
-例如：
+Taoyuan Weather
 
-8683161103
 
+GitHub Actions 支援：
 
-建議同樣使用 GitHub Secret 保存，不要直接寫死在 Python 程式裡。
+自動排程
 
-🤖 Telegram Bot
+手動執行
 
-需要先建立一個 Telegram Bot。
+指定日期
 
-取得 Bot Token 後，設定：
+指定行政區
 
-TELEGRAM_BOT_TOKEN
+控制 Telegram 推播
 
+⏰ 自動排程
 
-然後取得接收通知的 Chat ID：
-
-TELEGRAM_CHAT_ID
-
-
-完成後，GitHub Actions 就可以透過 Telegram Bot 發送訊息。
-
-🌧️ 每日雨量通知
-
-GitHub Actions 執行後會：
-
-GitHub Actions
-      │
-      ▼
-取得台灣目前日期
-      │
-      ▼
-計算前一天日期
-      │
-      ▼
-CWA API
-      │
-      ▼
-C-B0025-001
-      │
-      ▼
-篩選指定測站
-      │
-      ▼
-產生雨量訊息
-      │
-      ▼
-Telegram
-
-
-例如：
-
-🌧 降雨量資訊
-📅 日期：2026-09-24
-
-查詢測站：新屋、八德、蘆竹、龜山、中壢
-
-📍 新屋
-英文名稱：Xinwu
-測站編號：467050
-測站類型：署屬有人氣象站
-🌧 降雨量：12.0 mm
-────────────────
-
-📍 八德
-🌧 降雨量：8.0 mm
-────────────────
-
-📍 蘆竹
-🌧 降雨量：15.5 mm
-────────────────
-
-📍 龜山
-🌧 降雨量：3.0 mm
-────────────────
-
-📍 中壢
-測站編號：C0C700
-🌧 降雨量：4.0 mm
-────────────────
-
-📊 已取得 5 / 5 個測站資料
-
-🚨 350 mm 雨量警報
-
-本專案設定：
-
-RAIN_THRESHOLD = 350.0
-
-
-如果任何指定測站的前一天雨量達到：
-
-350 mm
-
-
-以上，就會額外發送 Telegram 警報。
-
-例如：
-
-🌧️ 桃園雨量警報
-
-⚠️ 2026-09-24 累積雨量達 350 mm 以上
-
-📍 測站：八德
-📅 日期：2026-09-24
-🌧️ 雨量：351 mm
-
-📍 測站：龜山
-📅 日期：2026-09-24
-🌧️ 雨量：370.5 mm
-
-
-如果沒有任何測站達到 350 mm：
-
-ℹ️ 沒有測站達到 350 mm
-
-
-不會另外發送警報訊息。
-
-🌧️ T 雨量值
-
-中央氣象署資料中的：
-
-T
-
-
-代表 Trace，也就是微量降雨。
-
-程式會將：
-
-T
-
-
-視為：
-
-0 mm
-
-
-例如：
-
-{
-  "Precipitation": "T"
-}
-
-
-會轉換為：
-
-0.0 mm
-
-▶️ 手動執行
-
-除了自動排程，也可以從 GitHub 手動執行。
-
-進入：
-
-GitHub Repository
-    ↓
-Actions
-    ↓
-桃園地面測站每日雨量
-    ↓
-Run workflow
-
-
-可以在：
-
-stations
-
-
-輸入測站。
-
-例如：
-
-新屋,八德,蘆竹,龜山,中壢
-
-
-也支援：
-
-新屋、八德、蘆竹
-
-
-或者：
-
-新屋 八德 蘆竹
-
-
-程式會自動解析。
-
-🧪 測試
-
-第一次建立完成後，建議先手動執行。
-
-進入：
-
-Actions
-    ↓
-桃園地面測站每日雨量
-    ↓
-Run workflow
-
-
-使用：
-
-新屋,八德,蘆竹,龜山,中壢
-
-
-執行後可以查看：
-
-Actions
-    ↓
-Workflow Run
-    ↓
-Run weather bot
-
-
-如果正常，Log 會看到類似：
-
-========================================
-桃園地面測站每日雨量
-========================================
-
-現在時間：2026-09-25T08:00:00+08:00
-查詢日期：2026-09-24
-
-查詢測站：新屋、八德、蘆竹、龜山、中壢
-
-CWA 回傳目標測站資料：5 筆
-
-✅ 一般雨量訊息已發送
-ℹ️ 沒有測站達到 350 mm
-
-完成。
-
-🔒 安全性
-
-請勿將以下資料直接寫入 Git：
-
-CWA API Key
-Telegram Bot Token
-Telegram Chat ID
-
-
-錯誤示範：
-
-CWA_API_KEY = "xxxxxxxxxxxxxxxx"
-
-
-或：
-
-TELEGRAM_BOT_TOKEN: "123456789:xxxxxxxx"
-
-
-正確方式是使用 GitHub Secrets：
-
-env:
-  CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
-  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-
-🛠️ 修改雨量警報門檻
-
-預設：
-
-RAIN_THRESHOLD = 350.0
-
-
-如果需要改成 200 mm：
-
-RAIN_THRESHOLD = 200.0
-
-
-改成 500 mm：
-
-RAIN_THRESHOLD = 500.0
-
-🛠️ 修改自動通知測站
-
-修改：
-
-DEFAULT_STATIONS = [
-    "新屋",
-    "八德",
-    "蘆竹",
-    "龜山",
-    "中壢",
-]
-
-
-例如改成：
-
-DEFAULT_STATIONS = [
-    "新屋",
-    "中壢",
-    "楊梅",
-    "龍潭",
-]
-
-🛠️ 修改執行時間
-
-目前：
+目前 Workflow：
 
 schedule:
-  - cron: "0 0,8,16 * * *"
-    timezone: "Asia/Taipei"
+  - cron: "0 * * * *"
 
 
 代表：
 
-台灣時間 00:00
-台灣時間 08:00
-台灣時間 16:00
+每小時執行一次
 
 
-例如每天 06:00 執行：
+GitHub Actions 的 cron 使用 UTC。
 
-schedule:
-  - cron: "0 6 * * *"
-    timezone: "Asia/Taipei"
+因此：
 
-
-每天 06:00、12:00、18:00 執行：
-
-schedule:
-  - cron: "0 6,12,18 * * *"
-    timezone: "Asia/Taipei"
-
-⚠️ GitHub Actions 排程注意事項
-
-GitHub Actions 的 schedule 不是保證精準執行時間的服務。
-
-即使設定：
-
-cron: "0 8 * * *"
-timezone: "Asia/Taipei"
+00:00 UTC = 台灣 08:00
+01:00 UTC = 台灣 09:00
+02:00 UTC = 台灣 10:00
+...
 
 
-實際執行仍可能因 GitHub Actions 平台負載而稍微延遲。
+程式本身使用：
 
-因此本專案適合：
-
-每日資料取得
-
-每數小時資料更新
-
-雨量通知
-
-一般自動化任務
-
-如果需求是：
-
-精確到秒
-
-高頻率執行
-
-24 小時即時 Telegram Bot
-
-Telegram 即時指令
-
-則建議使用常駐服務，而不是單純依賴 GitHub Actions。
-
-📱 Telegram 即時查詢的限制
-
-原本 n8n Workflow 有：
-
-Telegram Trigger
-       ↓
-使用者輸入
-       ↓
-判斷測站
-       ↓
-查詢資料
-       ↓
-Telegram 回覆
+Asia/Taipei
 
 
-GitHub Actions 則是：
+處理預報日期。
 
-Schedule
-   ↓
-執行 Python
-   ↓
-結束
+▶️ 手動執行
+
+進入：
+
+GitHub Repository
+→ Actions
+→ Taoyuan Weather
+→ Run workflow
 
 
-因此 GitHub Actions 本身不會一直等待 Telegram 訊息。
+可以設定：
 
-目前版本將原本 Telegram Trigger 的功能改為：
+input_date
+input_locations
+send_telegram
 
-GitHub Actions
+📅 input_date
+
+指定預報日期。
+
+例如：
+
+2026-09-25
+
+
+格式：
+
+YYYY-MM-DD
+
+
+例如：
+
+2026-09-25
+
+
+如果留空：
+
+使用 Asia/Taipei 當天日期
+
+
+程式會使用：
+
+datetime.now(ZoneInfo("Asia/Taipei"))
+
+
+取得日期。
+
+📍 input_locations
+
+指定要處理的桃園行政區。
+
+例如：
+
+桃園區
+
+
+或：
+
+桃園區,中壢區,龜山區
+
+
+也可以指定多個：
+
+桃園區,中壢區,龜山區,八德區,蘆竹區
+
+
+如果留空：
+
+桃園市 13 行政區全部處理
+
+⚠️ 未知行政區
+
+例如：
+
+桃園區,台北市,中壢區
+
+
+程式會：
+
+桃園區 → 有效
+台北市 → 忽略
+中壢區 → 有效
+
+
+GitHub Actions Log 會顯示：
+
+⚠️ 忽略未知行政區：台北市
+
+
+如果最後完全沒有有效行政區：
+
+程式直接停止
+
+📲 send_telegram
+
+控制是否發送 Telegram。
+
+true
+
+設定：
+
+send_telegram = true
+
+
+代表：
+
+取得 CWA 資料
       ↓
-Run workflow
+解析資料
       ↓
-輸入測站
+檢查降雨機率
       ↓
-查詢 CWA
+有 >= 70%
       ↓
-Telegram 回覆
+建立 Telegram 訊息
+      ↓
+發送 Telegram
+
+false
+
+設定：
+
+send_telegram = false
 
 
-如果需要真正保留：
+代表：
 
-使用者 → Telegram Bot → 即時查詢 → Telegram 回覆
+取得 CWA 資料
+      ↓
+解析資料
+      ↓
+檢查降雨機率
+      ↓
+輸出 GitHub Actions Log
+      ↓
+不發送 Telegram
 
 
-需要另外建立 Telegram Bot Webhook 或常駐 Bot 服務。
+這個模式適合測試。
 
-📁 主要檔案
+🧪 建議第一次測試方式
+
+第一次執行 GitHub Actions 時，建議：
+
+input_date：
+
+留空
+
+input_locations：
+
+留空
+
+send_telegram：
+
+false
+
+
+這樣可以先確認：
+
+CWA API
+↓
+資料取得
+↓
+資料解析
+↓
+13 行政區
+↓
+降雨機率
+↓
+Telegram 預覽
+
+
+確認 Log 正常後，再設定：
+
+send_telegram = true
+
+💻 本機測試
+系統需求
+Python 3.10+
+
+
+建議：
+
+Python 3.12
+
+📦 安裝套件
+
+進入 Repository：
+
+cd Daily-Rainfall-Data-of-Taoyuan-Weather-Station
+
+
+安裝：
+
+python -m pip install -r requirements.txt
+
+▶️ 一般執行
+
+Linux / macOS：
+
+CWA_API_KEY="你的KEY" \
+TELEGRAM_BOT_TOKEN="你的TOKEN" \
+TELEGRAM_CHAT_ID="你的CHAT_ID" \
+python scripts/weather.py
+
+🧪 只測試 CWA，不發 Telegram
+CWA_API_KEY="你的KEY" \
+SEND_TELEGRAM=false \
+python scripts/weather.py
+
+
+程式會：
+
+呼叫 CWA API
+↓
+取得資料
+↓
+解析資料
+↓
+檢查降雨機率
+↓
+輸出 Telegram 預覽
+
+
+但不會真的發送 Telegram。
+
+📅 指定日期
+
+例如：
+
+CWA_API_KEY="你的KEY" \
+SEND_TELEGRAM=false \
+INPUT_DATE="2026-09-25" \
+python scripts/weather.py
+
+📍 指定行政區
+
+例如：
+
+CWA_API_KEY="你的KEY" \
+SEND_TELEGRAM=false \
+INPUT_LOCATIONS="桃園區,中壢區,龜山區" \
+python scripts/weather.py
+
+📅📍 指定日期 + 行政區
+CWA_API_KEY="你的KEY" \
+SEND_TELEGRAM=false \
+INPUT_DATE="2026-09-25" \
+INPUT_LOCATIONS="桃園區,中壢區,龜山區" \
+python scripts/weather.py
+
+📱 Telegram 推播流程
+
+完整流程：
+
+                CWA API
+                   │
+          ┌────────┴────────┐
+          │                 │
+          ▼                 ▼
+   F-D0047-005       F-D0047-007
+    未來 3 天           未來 7 天
+          │                 │
+          └────────┬────────┘
+                   ▼
+            Python 解析資料
+                   │
+                   ▼
+             桃園 13 行政區
+                   │
+                   ▼
+             檢查降雨機率
+                   │
+                   ▼
+             是否 >= 70%？
+              /          \
+            否            是
+            │              │
+            ▼              ▼
+        不推播        建立訊息
+                           │
+                           ▼
+                    只保留 >= 70%
+                           │
+                           ▼
+                   Telegram Bot
+
+🌧️ 3 小時資料
+
+F-D0047-005 用於建立短時間尺度的降雨資料。
+
+例如：
+
+09:00～12:00｜降雨40%
+12:00～15:00｜降雨70%
+15:00～18:00｜降雨80%
+18:00～21:00｜降雨60%
+
+
+Telegram 只顯示：
+
+12:00～15:00｜短暫雨｜降雨70%
+15:00～18:00｜雨｜降雨80%
+
+📆 7 天資料
+
+F-D0047-007 用於建立逐日資料。
+
+例如：
+
+2026-09-25｜降雨40%
+2026-09-26｜降雨70%
+2026-09-27｜降雨80%
+2026-09-28｜降雨50%
+
+
+Telegram 只顯示：
+
+2026-09-26 週六｜短暫雨｜降雨70%
+2026-09-27 週日｜雨｜降雨80%
+
+✂️ Telegram 長訊息
+
+Telegram 單則訊息有長度限制。
+
+本專案採用約：
+
+3500 字元
+
+
+作為保守分割長度。
+
+當一次推播包含大量：
+
+行政區
++
+3 天資料
++
+7 天資料
+
+
+程式會自動分割成多則 Telegram 訊息。
+
+🔒 安全注意事項
+1. CWA API Key
+
+不要把：
+
+CWA_API_KEY
+
+
+直接寫入 Python 程式。
+
+不要提交：
+
+CWA_API_KEY="..."
+
+
+到 GitHub。
+
+2. Telegram Bot Token
+
+不要把：
+
+TELEGRAM_BOT_TOKEN
+
+
+提交到 Repository。
+
+3. Telegram Chat ID
+
+建議同樣使用 GitHub Secrets。
+
+📄 requirements.txt
+
+目前只有：
+
+requests>=2.31,<3
+
+
+安裝：
+
+python -m pip install -r requirements.txt
+
+📄 主要檔案
+scripts/weather.py
+
+主要負責：
+
+CWA API 呼叫
+
+F-D0047-005 資料取得
+
+F-D0047-007 資料取得
+
+CWA JSON 解析
+
+桃園行政區篩選
+
+3 天資料整理
+
+7 天資料整理
+
+降雨機率判斷
+
+Telegram 訊息建立
+
+Telegram 長訊息分割
+
+Telegram 推播
+
+目前門檻：
+
+POP_THRESHOLD = 70
+
+
+判斷：
+
+pop >= POP_THRESHOLD
+
+
+因此：
+
+70% → 符合
+71% → 符合
+80% → 符合
+100% → 符合
+69% → 不符合
+
 .github/workflows/weather.yml
 
 負責：
 
-GitHub Actions 排程
+GitHub Actions
 
-Asia/Taipei 台灣時區
+自動排程
 
 手動執行
 
+Python 3.12
+
+安裝 requirements
+
 GitHub Secrets
 
-啟動 Python
+Workflow Inputs
 
-scripts/weather.py
+執行 scripts/weather.py
 
-負責：
+requirements.txt
 
-CWA API
+Python runtime dependency：
 
-前一天日期計算
+requests
 
-測站篩選
+🛠️ 常見錯誤
+ModuleNotFoundError: No module named 'requests'
 
-雨量解析
+代表沒有安裝 Python dependency。
 
-Telegram 訊息
+執行：
 
-350 mm 警報
+python -m pip install -r requirements.txt
 
-手動測站輸入
 
-📌 GitHub Secrets 清單
+GitHub Actions 則會自動執行：
 
-完成設定後應該有：
+python -m pip install -r requirements.txt
 
-Settings
-└── Secrets and variables
-    └── Actions
-        ├── CWA_API_KEY
-        ├── TELEGRAM_BOT_TOKEN
-        └── TELEGRAM_CHAT_ID
+CWA_API_KEY 不存在
 
-📌 最終執行架構
-                    GitHub Actions
-                         │
-            ┌────────────┴────────────┐
-            │                         │
-      Schedule                  workflow_dispatch
-            │                         │
-    Asia/Taipei                手動指定測站
-            │                         │
-            └────────────┬────────────┘
+確認：
+
+Repository
+→ Settings
+→ Secrets and variables
+→ Actions
+
+
+是否存在：
+
+CWA_API_KEY
+
+TELEGRAM_BOT_TOKEN 不存在
+
+確認：
+
+TELEGRAM_BOT_TOKEN
+
+
+是否設定。
+
+TELEGRAM_CHAT_ID 不存在
+
+確認：
+
+TELEGRAM_CHAT_ID
+
+
+是否設定。
+
+所有資料都低於 70%
+
+這不是錯誤。
+
+程式會：
+
+所有降雨機率 < 70%
+↓
+不建立推播訊息
+↓
+不發送 Telegram
+
+
+GitHub Actions Job 仍會正常完成。
+
+🔎 降雨機率說明
+
+本專案使用的是：
+
+降雨機率
+Probability of Precipitation
+
+
+不是：
+
+降雨量 mm
+
+
+例如：
+
+降雨機率 70%
+
+
+代表預報資料中的降雨機率達到 70%。
+
+並不代表：
+
+會下 70 mm 的雨
+
+
+兩者是不同的天氣資訊。
+
+📊 資料流程
+CWA F-D0047-005
+        │
+        ▼
+未來 3 天資料
+        │
+        ├── 桃園區
+        ├── 中壢區
+        ├── 龜山區
+        ├── 八德區
+        ├── 蘆竹區
+        ├── 大園區
+        ├── 觀音區
+        ├── 新屋區
+        ├── 楊梅區
+        ├── 平鎮區
+        ├── 復興區
+        ├── 龍潭區
+        └── 大溪區
+
+CWA F-D0047-007
+        │
+        ▼
+未來 7 天資料
+        │
+        └── 桃園 13 行政區
+
+                ↓
+
+         Python 整合資料
+
+                ↓
+
+       檢查降雨機率 >= 70%
+
+                ↓
+
+       ┌────────┴────────┐
+       │                 │
+      否                 是
+       │                 │
+       ▼                 ▼
+    不推播          建立 Telegram
                          │
                          ▼
-                  scripts/weather.py
+                  只保留 >= 70%
                          │
                          ▼
-                計算台灣昨日日期
-                         │
-                         ▼
-                       CWA
-                         │
-                         ▼
-                  C-B0025-001
-                         │
-                         ▼
-                    篩選測站
-                         │
-              ┌──────────┴──────────┐
-              │                     │
-              ▼                     ▼
-          每日雨量               >= 350 mm
-              │                     │
-              ▼                     ▼
-          Telegram              Telegram
-             通知                  警報
+                    Telegram Bot
+
+📝 版本
+v2.3.0
+
+主要修改：
+
+Python 版本正式化
+
+修正 scripts/weather.py
+
+新增 requirements.txt
+
+GitHub Actions 改用 Python 3.12
+
+GitHub Actions 自動安裝 Python dependencies
+
+使用 requests
+
+使用 F-D0047-005
+
+使用 F-D0047-007
+
+停止使用 F-D0047-093
+
+新增降雨機率 >= 70% 推播門檻
+
+70% 本身會觸發推播
+
+Telegram 只顯示 >= 70%
+
+所有資料低於 70% 時不推播
+
+支援指定日期
+
+支援指定行政區
+
+支援 send_telegram
+
+Telegram 長訊息自動分割
+
+使用 Asia/Taipei 處理台灣日期與時間
+
+📡 資料來源
+
+本專案天氣資料來自：
+
+中央氣象署（CWA）公開資料服務
+
+使用資料集：
+
+F-D0047-005
+F-D0047-007
 
 📜 License
 
-此專案主要用於個人自動化與氣象資料通知。
+本專案依 Repository 實際設定的 License 為準。
 
-中央氣象署資料之使用與授權，請依中央氣象署 Open Data 相關規範辦理。
+:::
+
+這份 README 已經和目前的 **Python 版檔案結構、`requests`、Python 3.12、`python scripts/weather.py`、70% 門檻、GitHub Actions Inputs/Secrets** 對齊，可以直接放進 Repository。
+
