@@ -6,37 +6,27 @@
 
 桃園市 13 行政區天氣預報
 
+資料來源：
+- CWA F-D0047-005：未來 3 天逐 3 小時
+- CWA F-D0047-007：未來 1 週逐日
+
 功能：
-- CWA F-D0047-005：未來 3 天逐 3 小時預報
-- CWA F-D0047-007：未來 1 週逐日預報
 - 桃園市 13 行政區
-- 降雨機率 >= 70% 才觸發 Telegram
+- INPUT_DATE 指定預報日期
+- INPUT_LOCATIONS 指定行政區
+- SEND_TELEGRAM 控制 Telegram
+- 降雨機率 >= 70% 才推播
 - Telegram 只顯示 >= 70% 的資料
-- 支援 INPUT_DATE
-- 支援 INPUT_LOCATIONS
-- 支援 SEND_TELEGRAM
 - Telegram 長訊息自動分割
-- 使用 Python requests
+- 無符合資料時不發送 Telegram
 
-環境變數：
-
-CWA_API_KEY
-TELEGRAM_BOT_TOKEN
-TELEGRAM_CHAT_ID
-
-INPUT_DATE
-例如：
-2026-09-25
-
-INPUT_LOCATIONS
-例如：
-桃園區,中壢區,龜山區
-
-SEND_TELEGRAM
-true / false
-
-Python：
-3.10+
+Environment Variables:
+    CWA_API_KEY
+    TELEGRAM_BOT_TOKEN
+    TELEGRAM_CHAT_ID
+    INPUT_DATE
+    INPUT_LOCATIONS
+    SEND_TELEGRAM
 """
 
 import os
@@ -51,16 +41,16 @@ import requests
 # 設定
 # ============================================================
 
-POP_THRESHOLD = 70
-
-CWA_3DAY_DATASET = "F-D0047-005"
-CWA_7DAY_DATASET = "F-D0047-007"
-
 CWA_BASE_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore"
 
-TAIPEI_TZ = ZoneInfo("Asia/Taipei")
+DATASET_3DAY = "F-D0047-005"
+DATASET_7DAY = "F-D0047-007"
+
+POP_THRESHOLD = 70
 
 TELEGRAM_MAX_LENGTH = 3500
+
+TAIWAN_TZ = ZoneInfo("Asia/Taipei")
 
 
 # ============================================================
@@ -85,16 +75,16 @@ DISTRICTS = [
 
 
 # ============================================================
-# 工具
+# 基本工具
 # ============================================================
 
-def log(message: str) -> None:
+def log(message: str = "") -> None:
     """輸出 GitHub Actions Log。"""
     print(message, flush=True)
 
 
-def get_env_bool(name: str, default: bool = False) -> bool:
-    """取得 boolean 環境變數。"""
+def get_bool_env(name: str, default: bool = False) -> bool:
+    """取得 Boolean 環境變數。"""
 
     value = os.getenv(name)
 
@@ -110,44 +100,67 @@ def get_env_bool(name: str, default: bool = False) -> bool:
     }
 
 
+def get_api_key() -> str:
+    """取得 CWA API Key。"""
+
+    value = os.getenv("CWA_API_KEY", "").strip()
+
+    if not value:
+        raise RuntimeError(
+            "找不到 CWA_API_KEY。"
+        )
+
+    return value
+
+
 def get_input_date() -> str:
     """
-    取得指定日期。
-
-    INPUT_DATE 留空：
+    INPUT_DATE 留空時，
     使用 Asia/Taipei 當天日期。
     """
 
     value = os.getenv("INPUT_DATE", "").strip()
 
     if not value:
-        return datetime.now(TAIPEI_TZ).strftime("%Y-%m-%d")
+        return datetime.now(
+            TAIWAN_TZ
+        ).strftime("%Y-%m-%d")
 
     try:
-        datetime.strptime(value, "%Y-%m-%d")
+        datetime.strptime(
+            value,
+            "%Y-%m-%d",
+        )
     except ValueError:
         raise ValueError(
-            f"INPUT_DATE 格式錯誤：{value}，應為 YYYY-MM-DD"
+            "INPUT_DATE 格式錯誤，"
+            "請使用 YYYY-MM-DD，例如 2026-09-25"
         )
 
     return value
 
 
-def get_input_locations() -> list[str]:
+def get_locations() -> list[str]:
     """
-    取得指定行政區。
+    取得 INPUT_LOCATIONS。
 
     留空：
-    使用全部 13 行政區。
+        使用全部 13 行政區。
+
+    指定：
+        桃園區,中壢區,龜山區
 
     未知行政區：
-    忽略。
+        忽略。
 
-    如果最後沒有有效行政區：
-    直接停止。
+    最後沒有有效行政區：
+        直接錯誤。
     """
 
-    value = os.getenv("INPUT_LOCATIONS", "").strip()
+    value = os.getenv(
+        "INPUT_LOCATIONS",
+        "",
+    ).strip()
 
     if not value:
         return DISTRICTS.copy()
@@ -155,33 +168,41 @@ def get_input_locations() -> list[str]:
     locations = []
 
     for item in value.split(","):
+
         district = item.strip()
 
         if not district:
             continue
 
         if district in DISTRICTS:
+
             if district not in locations:
                 locations.append(district)
+
         else:
-            log(f"⚠️ 忽略未知行政區：{district}")
+            log(
+                f"⚠️ 忽略未知行政區：{district}"
+            )
 
     if not locations:
         raise ValueError(
-            "INPUT_LOCATIONS 沒有任何有效的桃園行政區。"
+            "INPUT_LOCATIONS 沒有任何有效行政區。"
         )
 
     return locations
 
 
-def safe_int(value):
-    """安全轉換整數。"""
+def parse_number(value):
+    """將 CWA 數值轉成 int。"""
 
     if value is None:
         return None
 
-    if isinstance(value, int):
-        return value
+    if isinstance(value, bool):
+        return None
+
+    if isinstance(value, (int, float)):
+        return int(value)
 
     text = str(value).strip()
 
@@ -189,7 +210,8 @@ def safe_int(value):
         return None
 
     text = (
-        text.replace("%", "")
+        text
+        .replace("%", "")
         .replace("％", "")
         .strip()
     )
@@ -200,96 +222,43 @@ def safe_int(value):
         return None
 
 
-def format_pop(value) -> str:
-    """格式化降雨機率。"""
+def parse_datetime(value: str):
+    """解析 CWA ISO 日期時間。"""
 
-    number = safe_int(value)
+    if not value:
+        return None
 
-    if number is None:
-        return "?"
+    try:
+        return datetime.fromisoformat(
+            value.replace("Z", "+00:00")
+        ).astimezone(TAIWAN_TZ)
 
-    return f"{number}%"
-
-
-def get_pop(value) -> int | None:
-    """取得降雨機率整數。"""
-
-    return safe_int(value)
-
-
-def split_telegram_message(
-    message: str,
-    max_length: int = TELEGRAM_MAX_LENGTH,
-) -> list[str]:
-    """
-    Telegram 長訊息分割。
-
-    優先以換行分割，
-    避免切斷天氣資料。
-    """
-
-    if len(message) <= max_length:
-        return [message]
-
-    chunks = []
-    current = ""
-
-    for line in message.splitlines(keepends=True):
-
-        if len(current) + len(line) <= max_length:
-            current += line
-            continue
-
-        if current:
-            chunks.append(current.rstrip())
-            current = ""
-
-        # 單行本身超過限制
-        while len(line) > max_length:
-            chunks.append(line[:max_length])
-            line = line[max_length:]
-
-        current = line
-
-    if current:
-        chunks.append(current.rstrip())
-
-    return chunks
+    except ValueError:
+        return None
 
 
 # ============================================================
 # CWA API
 # ============================================================
 
-def get_cwa_api_key() -> str:
-    """取得 CWA API Key。"""
-
-    api_key = os.getenv("CWA_API_KEY", "").strip()
-
-    if not api_key:
-        raise RuntimeError(
-            "找不到 CWA_API_KEY，請設定環境變數或 GitHub Secret。"
-        )
-
-    return api_key
-
-
-def fetch_cwa_dataset(
+def fetch_dataset(
     dataset_id: str,
     api_key: str,
 ) -> dict:
-    """
-    呼叫 CWA API。
-    """
+    """取得 CWA Dataset。"""
 
-    url = f"{CWA_BASE_URL}/{dataset_id}"
+    url = (
+        f"{CWA_BASE_URL}/{dataset_id}"
+    )
 
     params = {
         "Authorization": api_key,
         "format": "JSON",
     }
 
-    log(f"🌐 呼叫 CWA Dataset：{dataset_id}")
+    log(
+        f"🌐 CWA API：{dataset_id}"
+    )
 
     response = requests.get(
         url,
@@ -298,17 +267,14 @@ def fetch_cwa_dataset(
     )
 
     log(
-        f"HTTP {response.status_code} "
-        f"- {dataset_id}"
+        f"HTTP {response.status_code}"
     )
 
     response.raise_for_status()
 
     data = response.json()
 
-    success = data.get("success")
-
-    if success is False:
+    if data.get("success") is False:
         raise RuntimeError(
             f"CWA API 回傳失敗：{data}"
         )
@@ -317,21 +283,15 @@ def fetch_cwa_dataset(
 
 
 # ============================================================
-# CWA JSON 解析
+# CWA 結構解析
 # ============================================================
 
-def extract_locations(data: dict) -> list[dict]:
+def get_locations_from_records(
+    records,
+) -> list[dict]:
     """
-    取得 CWA locations。
-
-    CWA 資料結構可能因資料集版本略有不同，
-    因此這裡做多種格式相容。
+    相容 CWA Locations 結構。
     """
-
-    records = data.get("records", {})
-
-    if isinstance(records, list):
-        return records
 
     if not isinstance(records, dict):
         return []
@@ -339,23 +299,21 @@ def extract_locations(data: dict) -> list[dict]:
     locations = records.get("Locations")
 
     if isinstance(locations, list):
+
         result = []
 
-        for item in locations:
-            if not isinstance(item, dict):
+        for group in locations:
+
+            if not isinstance(group, dict):
                 continue
 
-            if "Location" in item:
-                location = item["Location"]
+            items = group.get("Location")
 
-                if isinstance(location, list):
-                    result.extend(location)
+            if isinstance(items, list):
+                result.extend(items)
 
-                elif isinstance(location, dict):
-                    result.append(location)
-
-            else:
-                result.append(item)
+            elif isinstance(items, dict):
+                result.append(items)
 
         return result
 
@@ -367,23 +325,35 @@ def extract_locations(data: dict) -> list[dict]:
     return []
 
 
-def extract_location_name(location: dict) -> str:
-    """
-    取得行政區名稱。
-    """
+def get_location_list(
+    data: dict,
+) -> list[dict]:
+    """取得行政區資料。"""
 
-    return (
+    records = data.get("records")
+
+    if not isinstance(records, dict):
+        return []
+
+    return get_locations_from_records(records)
+
+
+def get_location_name(
+    location: dict,
+) -> str:
+    """取得行政區名稱。"""
+
+    return str(
         location.get("LocationName")
         or location.get("locationName")
-        or location.get("Name")
         or ""
     ).strip()
 
 
-def extract_weather_elements(location: dict) -> list[dict]:
-    """
-    取得 weather element。
-    """
+def get_weather_elements(
+    location: dict,
+) -> list[dict]:
+    """取得 WeatherElement。"""
 
     elements = (
         location.get("WeatherElement")
@@ -400,11 +370,12 @@ def extract_weather_elements(location: dict) -> list[dict]:
     return []
 
 
-def element_name(element: dict) -> str:
-    return (
+def get_element_name(
+    element: dict,
+) -> str:
+    return str(
         element.get("ElementName")
         or element.get("elementName")
-        or element.get("Name")
         or ""
     ).strip()
 
@@ -413,26 +384,29 @@ def find_element(
     location: dict,
     names: list[str],
 ) -> dict | None:
-    """
-    找尋指定 WeatherElement。
-    """
+    """依 ElementName 找資料。"""
 
-    elements = extract_weather_elements(location)
+    elements = get_weather_elements(
+        location
+    )
 
     for element in elements:
-        name = element_name(element)
 
-        for target in names:
-            if name == target:
-                return element
+        name = get_element_name(element)
+
+        if name in names:
+            return element
 
     return None
 
 
-def extract_times(element: dict) -> list[dict]:
-    """
-    取得 Time。
-    """
+def get_times(
+    element: dict | None,
+) -> list[dict]:
+    """取得 WeatherElement 的 Time。"""
+
+    if not element:
+        return []
 
     times = (
         element.get("Time")
@@ -449,41 +423,130 @@ def extract_times(element: dict) -> list[dict]:
     return []
 
 
-def extract_value(value):
+def get_element_value(
+    time_item: dict,
+):
     """
-    CWA Value 相容處理。
+    取得 ElementValue。
+
+    CWA 可能是：
+        ElementValue
+        elementValue
     """
+
+    value = (
+        time_item.get("ElementValue")
+        or time_item.get("elementValue")
+        or []
+    )
+
+    if isinstance(value, list):
+
+        if not value:
+            return {}
+
+        return value[0]
 
     if isinstance(value, dict):
-        for key in (
-            "value",
-            "Value",
-            "百分比",
-            "ProbabilityOfPrecipitation",
-        ):
-            if key in value:
-                return value[key]
+        return value
 
+    return {}
+
+
+# ============================================================
+# 降雨機率
+# ============================================================
+
+def get_pop_from_value(
+    value: dict,
+) -> int | None:
+    """從 ElementValue 取得降雨機率。"""
+
+    if not isinstance(value, dict):
         return None
 
-    return value
+    candidates = [
+        "ProbabilityOfPrecipitation",
+        "PoP",
+        "POP",
+        "Value",
+        "value",
+    ]
+
+    for key in candidates:
+
+        if key not in value:
+            continue
+
+        number = parse_number(
+            value[key]
+        )
+
+        if number is not None:
+            return number
+
+    return None
 
 
 # ============================================================
-# 3 小時資料
+# 天氣描述
 # ============================================================
 
-def parse_3day_location(location: dict) -> list[dict]:
+def get_weather_from_value(
+    value: dict,
+) -> str:
+    """取得天氣描述。"""
+
+    if not isinstance(value, dict):
+        return ""
+
+    candidates = [
+        "Weather",
+        "weather",
+        "WeatherDescription",
+        "weatherDescription",
+        "Value",
+        "value",
+    ]
+
+    for key in candidates:
+
+        if key not in value:
+            continue
+
+        result = value[key]
+
+        if result is None:
+            continue
+
+        text = str(result).strip()
+
+        if text:
+            return text
+
+    return ""
+
+
+# ============================================================
+# 3 天逐 3 小時
+# ============================================================
+
+def parse_3day_location(
+    location: dict,
+) -> list[dict]:
     """
-    解析 F-D0047-005。
+    F-D0047-005。
+
+    只保留：
+        PoP >= 70
     """
 
-    result = []
-
-    district = extract_location_name(location)
+    district = get_location_name(
+        location
+    )
 
     if not district:
-        return result
+        return []
 
     pop_element = find_element(
         location,
@@ -491,7 +554,6 @@ def parse_3day_location(location: dict) -> list[dict]:
             "PoP6h",
             "PoP",
             "ProbabilityOfPrecipitation",
-            "降雨機率",
         ],
     )
 
@@ -500,97 +562,73 @@ def parse_3day_location(location: dict) -> list[dict]:
         [
             "Wx",
             "WeatherDescription",
-            "天氣現象",
-            "天氣預報綜合描述",
         ],
     )
 
     if not pop_element:
-        return result
+        return []
 
-    pop_times = extract_times(pop_element)
-    weather_times = (
-        extract_times(weather_element)
-        if weather_element
-        else []
+    pop_times = get_times(
+        pop_element
     )
 
-    for index, time_data in enumerate(pop_times):
+    weather_times = get_times(
+        weather_element
+    )
 
-        start_time = (
-            time_data.get("StartTime")
-            or time_data.get("startTime")
+    result = []
+
+    for index, item in enumerate(
+        pop_times
+    ):
+
+        start = (
+            item.get("StartTime")
+            or item.get("startTime")
             or ""
         )
 
-        end_time = (
-            time_data.get("EndTime")
-            or time_data.get("endTime")
+        end = (
+            item.get("EndTime")
+            or item.get("endTime")
             or ""
         )
 
-        value = (
-            time_data.get("ElementValue")
-            or time_data.get("elementValue")
-            or time_data.get("Value")
-            or time_data.get("value")
+        value = get_element_value(
+            item
         )
 
-        if isinstance(value, list) and value:
-            value = value[0]
-
-        pop = None
-
-        if isinstance(value, dict):
-            pop = (
-                value.get("ProbabilityOfPrecipitation")
-                or value.get("PoP")
-                or value.get("value")
-                or value.get("Value")
-            )
-        else:
-            pop = value
-
-        pop = get_pop(pop)
+        pop = get_pop_from_value(
+            value
+        )
 
         if pop is None:
+            continue
+
+        if pop < POP_THRESHOLD:
             continue
 
         weather = ""
 
         if index < len(weather_times):
 
-            weather_data = weather_times[index]
-
             weather_value = (
-                weather_data.get("ElementValue")
-                or weather_data.get("elementValue")
-                or weather_data.get("Value")
-                or weather_data.get("value")
+                get_element_value(
+                    weather_times[index]
+                )
             )
 
-            if isinstance(weather_value, list) and weather_value:
-                weather_value = weather_value[0]
-
-            if isinstance(weather_value, dict):
-                weather = (
-                    weather_value.get("Weather")
-                    or weather_value.get("weather")
-                    or weather_value.get("value")
-                    or weather_value.get("Value")
-                    or ""
+            weather = (
+                get_weather_from_value(
+                    weather_value
                 )
-            elif weather_value is not None:
-                weather = str(weather_value)
-
-        if pop < POP_THRESHOLD:
-            continue
+            )
 
         result.append(
             {
                 "district": district,
-                "start": start_time,
-                "end": end_time,
+                "start": start,
+                "end": end,
                 "weather": weather or "降雨",
                 "pop": pop,
             }
@@ -599,59 +637,26 @@ def parse_3day_location(location: dict) -> list[dict]:
     return result
 
 
-def format_time_range(
-    start: str,
-    end: str,
-) -> str:
-    """
-    將 CWA 時間格式轉成：
-
-    12:00～15:00
-    """
-
-    def format_one(value: str) -> str:
-
-        if not value:
-            return ""
-
-        try:
-            dt = datetime.fromisoformat(
-                value.replace("Z", "+00:00")
-            )
-
-            return dt.astimezone(
-                TAIPEI_TZ
-            ).strftime("%H:%M")
-
-        except Exception:
-            return value[-5:] if len(value) >= 5 else value
-
-    start_text = format_one(start)
-    end_text = format_one(end)
-
-    if start_text and end_text:
-        return f"{start_text}～{end_text}"
-
-    return start_text or end_text
-
-
 # ============================================================
-# 7 天資料
+# 7 天逐日
 # ============================================================
 
-def parse_7day_location(location: dict) -> list[dict]:
+def parse_7day_location(
+    location: dict,
+) -> list[dict]:
     """
-    解析 F-D0047-007。
+    F-D0047-007。
 
-    只保留 >= 70% 的資料。
+    只保留：
+        PoP >= 70
     """
 
-    result = []
-
-    district = extract_location_name(location)
+    district = get_location_name(
+        location
+    )
 
     if not district:
-        return result
+        return []
 
     pop_element = find_element(
         location,
@@ -659,7 +664,6 @@ def parse_7day_location(location: dict) -> list[dict]:
             "PoP12h",
             "PoP",
             "ProbabilityOfPrecipitation",
-            "降雨機率",
         ],
     )
 
@@ -668,59 +672,45 @@ def parse_7day_location(location: dict) -> list[dict]:
         [
             "Wx",
             "WeatherDescription",
-            "天氣現象",
-            "天氣預報綜合描述",
         ],
     )
 
     if not pop_element:
-        return result
+        return []
 
-    pop_times = extract_times(pop_element)
-
-    weather_times = (
-        extract_times(weather_element)
-        if weather_element
-        else []
+    pop_times = get_times(
+        pop_element
     )
 
-    for index, time_data in enumerate(pop_times):
+    weather_times = get_times(
+        weather_element
+    )
 
-        start_time = (
-            time_data.get("StartTime")
-            or time_data.get("startTime")
+    result = []
+
+    for index, item in enumerate(
+        pop_times
+    ):
+
+        start = (
+            item.get("StartTime")
+            or item.get("startTime")
             or ""
         )
 
-        end_time = (
-            time_data.get("EndTime")
-            or time_data.get("endTime")
+        end = (
+            item.get("EndTime")
+            or item.get("endTime")
             or ""
         )
 
-        value = (
-            time_data.get("ElementValue")
-            or time_data.get("elementValue")
-            or time_data.get("Value")
-            or time_data.get("value")
+        value = get_element_value(
+            item
         )
 
-        if isinstance(value, list) and value:
-            value = value[0]
-
-        pop = None
-
-        if isinstance(value, dict):
-            pop = (
-                value.get("ProbabilityOfPrecipitation")
-                or value.get("PoP")
-                or value.get("value")
-                or value.get("Value")
-            )
-        else:
-            pop = value
-
-        pop = get_pop(pop)
+        pop = get_pop_from_value(
+            value
+        )
 
         if pop is None:
             continue
@@ -732,40 +722,83 @@ def parse_7day_location(location: dict) -> list[dict]:
 
         if index < len(weather_times):
 
-            weather_data = weather_times[index]
-
             weather_value = (
-                weather_data.get("ElementValue")
-                or weather_data.get("elementValue")
-                or weather_data.get("Value")
-                or weather_data.get("value")
+                get_element_value(
+                    weather_times[index]
+                )
             )
 
-            if isinstance(weather_value, list) and weather_value:
-                weather_value = weather_value[0]
-
-            if isinstance(weather_value, dict):
-                weather = (
-                    weather_value.get("Weather")
-                    or weather_value.get("weather")
-                    or weather_value.get("value")
-                    or weather_value.get("Value")
-                    or ""
+            weather = (
+                get_weather_from_value(
+                    weather_value
                 )
-            elif weather_value is not None:
-                weather = str(weather_value)
+            )
 
         result.append(
             {
                 "district": district,
-                "start": start_time,
-                "end": end_time,
+                "start": start,
+                "end": end,
                 "weather": weather or "降雨",
                 "pop": pop,
             }
         )
 
     return result
+
+
+# ============================================================
+# 日期 / 時間格式
+# ============================================================
+
+def format_time_range(
+    start: str,
+    end: str,
+) -> str:
+    """格式化 3 小時區間。"""
+
+    start_dt = parse_datetime(start)
+    end_dt = parse_datetime(end)
+
+    if start_dt and end_dt:
+
+        return (
+            f"{start_dt.strftime('%H:%M')}"
+            f"～"
+            f"{end_dt.strftime('%H:%M')}"
+        )
+
+    return (
+        f"{start[-5:] if start else ''}"
+        f"～"
+        f"{end[-5:] if end else ''}"
+    )
+
+
+def format_daily_date(
+    value: str,
+) -> str:
+    """格式化每日日期。"""
+
+    weekdays = [
+        "週一",
+        "週二",
+        "週三",
+        "週四",
+        "週五",
+        "週六",
+        "週日",
+    ]
+
+    dt = parse_datetime(value)
+
+    if not dt:
+        return value[:10]
+
+    return (
+        f"{dt.strftime('%Y-%m-%d')} "
+        f"{weekdays[dt.weekday()]}"
+    )
 
 
 # ============================================================
@@ -774,56 +807,50 @@ def parse_7day_location(location: dict) -> list[dict]:
 
 def build_message(
     input_date: str,
-    selected_districts: list[str],
+    districts: list[str],
     hourly_data: list[dict],
     daily_data: list[dict],
 ) -> str | None:
-    """
-    建立 Telegram 訊息。
-
-    如果所有資料都 < 70%，
-    回傳 None。
-    """
+    """建立 Telegram 訊息。"""
 
     if not hourly_data and not daily_data:
         return None
 
-    lines = []
+    lines = [
+        "🌤 桃園市降雨預報",
+        f"📅 預報日期：{input_date}",
+        f"🌧 降雨機率門檻：{POP_THRESHOLD}%",
+        "",
+    ]
 
-    lines.append("🌤 桃園市降雨預報")
-    lines.append(
-        f"📅 預報日期：{input_date}"
-    )
-    lines.append(
-        f"🌧 降雨機率門檻：{POP_THRESHOLD}%"
-    )
-    lines.append("")
+    for district in districts:
 
-    for district in selected_districts:
-
-        district_hourly = [
+        hourly = [
             item
             for item in hourly_data
             if item["district"] == district
         ]
 
-        district_daily = [
+        daily = [
             item
             for item in daily_data
             if item["district"] == district
         ]
 
-        if not district_hourly and not district_daily:
+        if not hourly and not daily:
             continue
 
-        lines.append(f"📍 {district}")
+        lines.append(
+            f"📍 {district}"
+        )
 
-        if district_hourly:
+        if hourly:
 
-            lines.append("")
-            lines.append("【未來3天・逐3小時】")
+            lines.append(
+                "【未來3天・逐3小時】"
+            )
 
-            for item in district_hourly:
+            for item in hourly:
 
                 time_range = format_time_range(
                     item["start"],
@@ -836,14 +863,15 @@ def build_message(
                     f"｜降雨{item['pop']}%"
                 )
 
-        if district_daily:
+        if daily:
 
-            lines.append("")
-            lines.append("【未來7天・逐日】")
+            lines.append(
+                "【未來7天・逐日】"
+            )
 
-            for item in district_daily:
+            for item in daily:
 
-                date_text = format_date_with_weekday(
+                date_text = format_daily_date(
                     item["start"]
                 )
 
@@ -857,61 +885,73 @@ def build_message(
 
     message = "\n".join(lines).strip()
 
-    if not message:
-        return None
-
-    return message
+    return message or None
 
 
-def format_date_with_weekday(value: str) -> str:
+def split_message(
+    message: str,
+) -> list[str]:
     """
-    日期格式：
+    Telegram 長訊息分割。
 
-    2026-09-27 週日
+    優先依換行切割。
     """
 
-    weekdays = [
-        "週一",
-        "週二",
-        "週三",
-        "週四",
-        "週五",
-        "週六",
-        "週日",
-    ]
+    if len(message) <= TELEGRAM_MAX_LENGTH:
+        return [message]
 
-    try:
-        dt = datetime.fromisoformat(
-            value.replace("Z", "+00:00")
+    chunks = []
+    current = ""
+
+    for line in message.splitlines():
+
+        candidate = (
+            f"{current}\n{line}"
+            if current
+            else line
         )
 
-        dt = dt.astimezone(TAIPEI_TZ)
+        if len(candidate) <= TELEGRAM_MAX_LENGTH:
 
-        return (
-            f"{dt.strftime('%Y-%m-%d')} "
-            f"{weekdays[dt.weekday()]}"
-        )
+            current = candidate
+            continue
 
-    except Exception:
+        if current:
+            chunks.append(current)
+            current = ""
 
-        if len(value) >= 10:
-            return value[:10]
+        if len(line) <= TELEGRAM_MAX_LENGTH:
 
-        return value
+            current = line
+
+        else:
+
+            while len(line) > TELEGRAM_MAX_LENGTH:
+
+                chunks.append(
+                    line[:TELEGRAM_MAX_LENGTH]
+                )
+
+                line = line[
+                    TELEGRAM_MAX_LENGTH:
+                ]
+
+            current = line
+
+    if current:
+        chunks.append(current)
+
+    return chunks
 
 
 # ============================================================
-# Telegram
+# Telegram API
 # ============================================================
 
-def send_telegram_message(
+def send_telegram(
     message: str,
 ) -> None:
-    """
-    傳送 Telegram。
-
-    Telegram 訊息會自動分割。
-    """
+    """發送 Telegram。"""
 
     bot_token = os.getenv(
         "TELEGRAM_BOT_TOKEN",
@@ -934,32 +974,28 @@ def send_telegram_message(
         )
 
     url = (
-        f"https://api.telegram.org/"
+        "https://api.telegram.org/"
         f"bot{bot_token}/sendMessage"
     )
 
-    chunks = split_telegram_message(message)
+    chunks = split_message(message)
 
     log(
-        f"📨 Telegram 訊息共 {len(chunks)} 則"
+        f"📨 Telegram 將發送 {len(chunks)} 則訊息"
     )
 
-    for index, chunk in enumerate(chunks, start=1):
-
-        payload = {
-            "chat_id": chat_id,
-            "text": chunk,
-        }
+    for index, chunk in enumerate(
+        chunks,
+        start=1,
+    ):
 
         response = requests.post(
             url,
-            json=payload,
+            json={
+                "chat_id": chat_id,
+                "text": chunk,
+            },
             timeout=30,
-        )
-
-        log(
-            f"Telegram {index}/{len(chunks)} "
-            f"HTTP {response.status_code}"
         )
 
         response.raise_for_status()
@@ -968,8 +1004,13 @@ def send_telegram_message(
 
         if not data.get("ok"):
             raise RuntimeError(
-                f"Telegram API 失敗：{data}"
+                f"Telegram API 錯誤：{data}"
             )
+
+        log(
+            f"✅ Telegram "
+            f"{index}/{len(chunks)} 發送完成"
+        )
 
 
 # ============================================================
@@ -984,29 +1025,26 @@ def main() -> int:
 
     try:
 
+        api_key = get_api_key()
+
         input_date = get_input_date()
 
-        selected_districts = (
-            get_input_locations()
+        districts = get_locations()
+
+        send_telegram_enabled = (
+            get_bool_env(
+                "SEND_TELEGRAM",
+                True,
+            )
         )
 
-        send_telegram = get_env_bool(
-            "SEND_TELEGRAM",
-            default=True,
+        log(
+            f"📅 預報日期：{input_date}"
         )
-
-        api_key = get_cwa_api_key()
-
-        log(f"📅 INPUT_DATE：{input_date}")
 
         log(
             "📍 行政區："
-            + ", ".join(selected_districts)
-        )
-
-        log(
-            f"📨 SEND_TELEGRAM："
-            f"{send_telegram}"
+            + ", ".join(districts)
         )
 
         log(
@@ -1014,21 +1052,33 @@ def main() -> int:
             f"{POP_THRESHOLD}%"
         )
 
+        log(
+            "📨 Telegram："
+            + (
+                "啟用"
+                if send_telegram_enabled
+                else "停用"
+            )
+        )
+
         # ----------------------------------------------------
-        # F-D0047-005
+        # 取得 3 天資料
         # ----------------------------------------------------
 
-        data_3day = fetch_cwa_dataset(
-            CWA_3DAY_DATASET,
+        data_3day = fetch_dataset(
+            DATASET_3DAY,
             api_key,
         )
 
-        locations_3day = extract_locations(
-            data_3day
+        locations_3day = (
+            get_location_list(
+                data_3day
+            )
         )
 
         log(
-            f"📊 F-D0047-005 行政區資料："
+            f"📊 F-D0047-005 "
+            f"行政區數："
             f"{len(locations_3day)}"
         )
 
@@ -1036,34 +1086,37 @@ def main() -> int:
 
         for location in locations_3day:
 
-            district = extract_location_name(
+            district = get_location_name(
                 location
             )
 
-            if district not in selected_districts:
+            if district not in districts:
                 continue
 
-            items = parse_3day_location(
-                location
+            hourly_data.extend(
+                parse_3day_location(
+                    location
+                )
             )
 
-            hourly_data.extend(items)
-
         # ----------------------------------------------------
-        # F-D0047-007
+        # 取得 7 天資料
         # ----------------------------------------------------
 
-        data_7day = fetch_cwa_dataset(
-            CWA_7DAY_DATASET,
+        data_7day = fetch_dataset(
+            DATASET_7DAY,
             api_key,
         )
 
-        locations_7day = extract_locations(
-            data_7day
+        locations_7day = (
+            get_location_list(
+                data_7day
+            )
         )
 
         log(
-            f"📊 F-D0047-007 行政區資料："
+            f"📊 F-D0047-007 "
+            f"行政區數："
             f"{len(locations_7day)}"
         )
 
@@ -1071,36 +1124,38 @@ def main() -> int:
 
         for location in locations_7day:
 
-            district = extract_location_name(
+            district = get_location_name(
                 location
             )
 
-            if district not in selected_districts:
+            if district not in districts:
                 continue
 
-            items = parse_7day_location(
-                location
+            daily_data.extend(
+                parse_7day_location(
+                    location
+                )
             )
 
-            daily_data.extend(items)
-
         # ----------------------------------------------------
-        # 統計
+        # 結果
         # ----------------------------------------------------
 
         log("")
         log("=" * 60)
-        log("📊 降雨門檻檢查")
+        log("📊 結果")
         log("=" * 60)
 
         log(
-            f"3 小時符合資料："
-            f"{len(hourly_data)}"
+            f"3 小時符合 >= "
+            f"{POP_THRESHOLD}%："
+            f"{len(hourly_data)} 筆"
         )
 
         log(
-            f"7 天符合資料："
-            f"{len(daily_data)}"
+            f"7 天符合 >= "
+            f"{POP_THRESHOLD}%："
+            f"{len(daily_data)} 筆"
         )
 
         total = (
@@ -1108,12 +1163,16 @@ def main() -> int:
             + len(daily_data)
         )
 
+        # ----------------------------------------------------
+        # 沒有達門檻
+        # ----------------------------------------------------
+
         if total == 0:
 
             log("")
             log(
-                f"✅ 所有資料降雨機率 "
-                f"< {POP_THRESHOLD}%"
+                f"☀️ 沒有任何降雨機率 "
+                f">= {POP_THRESHOLD}%"
             )
 
             log(
@@ -1123,12 +1182,12 @@ def main() -> int:
             return 0
 
         # ----------------------------------------------------
-        # 建立 Telegram
+        # 建立訊息
         # ----------------------------------------------------
 
         message = build_message(
             input_date=input_date,
-            selected_districts=selected_districts,
+            districts=districts,
             hourly_data=hourly_data,
             daily_data=daily_data,
         )
@@ -1136,7 +1195,7 @@ def main() -> int:
         if not message:
 
             log(
-                "ℹ️ 沒有符合條件的 Telegram 訊息"
+                "⚠️ 無法建立 Telegram 訊息"
             )
 
             return 0
@@ -1152,17 +1211,9 @@ def main() -> int:
         # Telegram
         # ----------------------------------------------------
 
-        if send_telegram:
+        if send_telegram_enabled:
 
-            log("📨 開始發送 Telegram...")
-
-            send_telegram_message(
-                message
-            )
-
-            log(
-                "✅ Telegram 發送完成"
-            )
+            send_telegram(message)
 
         else:
 
@@ -1171,31 +1222,32 @@ def main() -> int:
             )
 
             log(
-                "ℹ️ 不實際發送 Telegram"
+                "ℹ️ 僅輸出預覽，不發送 Telegram"
             )
 
         log("")
-        log("✅ Weather job 完成")
+        log("✅ Weather 完成")
 
         return 0
 
-    except requests.RequestException as exc:
+    except requests.RequestException as error:
 
         log("")
-        log("❌ HTTP Request 錯誤")
-        log(str(exc))
+        log("❌ CWA / Telegram HTTP 錯誤")
+        log(str(error))
 
         return 1
 
-    except Exception as exc:
+    except Exception as error:
 
         log("")
         log("❌ 執行失敗")
-        log(f"{type(exc).__name__}: {exc}")
+        log(
+            f"{type(error).__name__}: {error}"
+        )
 
         return 1
 
 
 if __name__ == "__main__":
     sys.exit(main())
-
