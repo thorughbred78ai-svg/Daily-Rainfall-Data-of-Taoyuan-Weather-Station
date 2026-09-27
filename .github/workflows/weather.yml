@@ -12,7 +12,7 @@ on:
       stations:
         description: "測站名稱，可用逗號或頓號分隔，例如：新屋,八德,蘆竹,龜山,中壢"
         required: false
-        default: "新屋,八德,蘆竹,龜山,中壢"
+        default: "桃園區,中壢區,龜山區,八德區,蘆竹區,大園區,觀音區,新屋區,楊梅區,平鎮區,復興區,龍潭區,大溪區"
         type: string
 
 
